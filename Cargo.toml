@@ -10,6 +10,7 @@ keywords = ["proc-macro", "layered", "crate", "dependencies", "module"]
 categories = ["rust-patterns", "development-tools", "development-tools::build-utils", "development-tools::testing"]
 exclude = [
     ".github/**/*",
+    "tests/**/*",
     "README.md",
     "Taskfile.yml"
 ]
