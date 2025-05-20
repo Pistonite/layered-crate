@@ -1,0 +1,5 @@
+error: module `z` should be declared before its dependency `y` to ensure top-down readability
+ --> tests/ui/module_order.fail.rs:7:22
+  |
+7 |     pub extern crate z;
+  |                      ^

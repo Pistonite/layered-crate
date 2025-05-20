@@ -1,0 +1,30 @@
+name: PR
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  check:
+    name: change-me
+    runs-on: ubuntu-latest
+
+    # normal check/test/build workflow
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: ./.github/steps/setup
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # run the thing
+      - run: task install
+      - run: task check
+      - run: task test
+      - run: cargo doc
+
