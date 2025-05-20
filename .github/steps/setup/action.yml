@@ -22,3 +22,6 @@ runs:
       with:
         targets: ${{ inputs.rust_targets }}
     - uses: Swatinem/rust-cache@v2
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-expand

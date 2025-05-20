@@ -9,7 +9,7 @@ on:
 
 jobs:
   check:
-    name: change-me
+    name: Checks
     runs-on: ubuntu-latest
 
     # normal check/test/build workflow
