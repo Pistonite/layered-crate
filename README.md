@@ -2,6 +2,26 @@
 
 Enforce dependencies amongst internal modules in a crate
 
+```rust,ignore
+use layered_crate::layers;
+
+#[layers]
+mod src {
+    /// Public APIs
+    #[depends_on(details)]
+    #[depends_on(utils)]
+    extern crate api;
+
+    #[depends_on(utils)]
+    pub extern crate details;
+
+    /// Internal utils
+    extern crate utils;
+}
+
+pub use api::*;
+```
+
 ## The Problem
 In a large Rust project, it's common to have modules or subsystems in a crate
 that depends on other parts of the crate, forming an internal dependency
@@ -25,10 +45,16 @@ for something on crates.io. There are several upsides and downsides to this. Jus
 
 This crate takes a different approach. It uses a proc-macro and some custom
 syntax to check and enforce the dependencies at compile time, all within the same crate.
-The effect is invisible to people using the crate.
+This has a few advantages:
+- Uses the same `Cargo.toml` as before
+- The effect is invisible to people using the crate.
 
-All said, this crate may not be the best fit for your use case. You should do the research needed
-to figure out the best approach for you.
+... and a few disadvantages:
+- Uses custom syntax
+- The enforcement is not strict, since that's outside of the power of proc-macros
+
+All said, you should do the research needed to figure out if this crate is the right approach for
+your use case.
 
 ## Usage
 

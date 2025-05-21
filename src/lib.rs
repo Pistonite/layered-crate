@@ -28,44 +28,109 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
         Some(content) => content,
     };
 
+    let mut before_tokens = TokenStream2::new();
+    let mut has_doc_hidden = false;
+
+    // keep the original attributes, except for the ones we don't want
+    for attr in input.attrs {
+        // skip #[doc(hidden)]
+        if attr.path().is_ident("doc") {
+            if let Ok(x) = attr
+                .meta
+                .require_list()
+                .and_then(|m| m.parse_args::<syn::Ident>())
+            {
+                if x == "hidden" {
+                    has_doc_hidden = true;
+                }
+            }
+        }
+        before_tokens.extend(quote! { #attr });
+    }
+    if !has_doc_hidden {
+        before_tokens.extend(quote! { #[doc(hidden)] });
+    }
+
     // collect the dependency attributes
     let mut graph = DepsGraph::default();
     let mut transformed_src_content = TokenStream2::new();
+    let mut error_tokens = TokenStream2::new();
 
     for item in content {
-        // Limitation - non-inline modules in proc-macro is unstable
-        // so as a workaround we use "extern crate" right now
-        let syn::Item::ExternCrate(mut item) = item else {
-            transformed_src_content.extend(quote! { #item });
-            continue;
-        };
-        let vis = item.vis.clone();
-        let ident = item.ident;
-        let mut edges = Vec::with_capacity(item.attrs.len());
-        let dependencies = {
-            let mut d = Vec::with_capacity(item.attrs.len());
-            std::mem::swap(&mut item.attrs, &mut d);
-            d
-        };
-        let mut docs = TokenStream2::new();
-        for dep in dependencies {
-            if !dep.path().is_ident("depends_on") {
-                if dep.path().is_ident("doc") {
-                    docs.extend(quote! { #dep });
+        // attrs  vis              ident  extra_tokens
+        // #[...] pub mod          xxx    {...}
+        // #[...] pub mod          yyy    ;
+        // #[...] pub extern crate zzz    ;
+        let (attrs, vis, ident, extra_tokens) = match item {
+            // Limitation - non-inline modules in proc-macro is unstable
+            // so as a workaround we use "extern crate" as a placeholder
+            // for non-inline modules
+            syn::Item::ExternCrate(item) => {
+                let mut extra_tokens = TokenStream2::new();
+                if let Some(rename) = item.rename {
+                    let e = syn::Error::new_spanned(
+                        &rename.1,
+                        "rename syntax (as ...) is not supported when using #[layers]",
+                    );
+                    extra_tokens.extend(e.to_compile_error());
                 }
-                transformed_src_content.extend(quote! { #dep });
+                let semi = item.semi_token;
+                extra_tokens.extend(quote! { #semi });
+
+                (item.attrs, item.vis, item.ident, extra_tokens)
+            }
+            syn::Item::Mod(item) => {
+                let mut extra_tokens = TokenStream2::new();
+                if let Some((_, content)) = item.content {
+                    extra_tokens.extend(quote! { { #(#content)* } });
+                }
+                if let Some(semi) = item.semi {
+                    extra_tokens.extend(quote! { #semi });
+                }
+
+                (item.attrs, item.vis, item.ident, extra_tokens)
+            }
+            _ => {
+                // other items in the mod, we just leave them along
+                transformed_src_content.extend(quote! { #item });
                 continue;
             }
-            let ident = dep.meta.require_list()?.parse_args::<syn::Ident>()?;
-            let ident_str = ident.to_string();
-            edges.push(DepEdge {
-                attr: dep,
-                ident,
-                name: ident_str,
-            });
+        };
+
+        // Extract the attributes
+        let mut edges = Vec::with_capacity(attrs.len());
+        let mut docs = TokenStream2::new();
+        for attr in attrs {
+            if attr.path().is_ident("depends_on") {
+                let ident = match attr
+                    .meta
+                    .require_list()
+                    .and_then(|m| m.parse_args::<syn::Ident>())
+                {
+                    Ok(x) => x,
+                    Err(e) => {
+                        error_tokens.extend(e.to_compile_error());
+                        continue;
+                    }
+                };
+                edges.push(DepEdge {
+                    name: ident.to_string(),
+                    attr,
+                    ident,
+                });
+                continue;
+            }
+
+            if attr.path().is_ident("doc") {
+                docs.extend(quote! { #attr });
+            }
+
+            // keep attributes unrelated to us
+            transformed_src_content.extend(quote! { #attr });
         }
+
         transformed_src_content.extend(quote! {
-            pub mod #ident;
+            pub mod #ident #extra_tokens
         });
         graph.add(
             matches!(vis, syn::Visibility::Public(_)),
@@ -78,7 +143,7 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
     // check - this produces the errors as tokens instead of
     // result. we still emit the expanded output even if check fails,
     // so that we don't cause massive compile failures
-    let check_result_tokens = graph.check();
+    error_tokens.extend(graph.check());
 
     // create a new ident, so unused warnings don't show up
     // on the entire macro input
@@ -86,12 +151,12 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
     let mod_tokens = graph.generate_impl(&src_ident);
 
     let expanded = quote! {
-        #[doc(hidden)]
+        #before_tokens
         pub(crate) mod #src_ident {
             #transformed_src_content
         }
         #mod_tokens
-        #check_result_tokens
+        #error_tokens
     };
 
     Ok(expanded.into())
@@ -106,7 +171,7 @@ struct DepsGraph {
 struct ModuleDecl {
     /// Order of the module appearance in the source
     order: usize,
-    /// The visibility of the mod
+    /// Whether the mod has `pub`
     is_pub: bool,
     /// Ident for the mod
     ident: syn::Ident,
