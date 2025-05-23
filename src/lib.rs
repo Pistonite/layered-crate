@@ -1,7 +1,5 @@
 #![doc = include_str!("../README.md")]
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use proc_macro::TokenStream;
 use proc_macro2::Span as Span2;
 use proc_macro2::TokenStream as TokenStream2;
@@ -31,9 +29,9 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
     let mut before_tokens = TokenStream2::new();
     let mut has_doc_hidden = false;
 
-    // keep the original attributes, except for the ones we don't want
+    // keep the original attributes on the whole import
+    // and ensure #[doc(hidden)] is present
     for attr in input.attrs {
-        // skip #[doc(hidden)]
         if attr.path().is_ident("doc") {
             if let Ok(x) = attr
                 .meta
@@ -52,7 +50,7 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
     }
 
     // collect the dependency attributes
-    let mut graph = DepsGraph::default();
+    let mut graph = graph::DepsGraph::default();
     let mut transformed_src_content = TokenStream2::new();
     let mut error_tokens = TokenStream2::new();
 
@@ -100,6 +98,7 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
         // Extract the attributes
         let mut edges = Vec::with_capacity(attrs.len());
         let mut docs = TokenStream2::new();
+        let mut cfg = TokenStream2::new();
         for attr in attrs {
             if attr.path().is_ident("depends_on") {
                 let ident = match attr
@@ -113,7 +112,7 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
                         continue;
                     }
                 };
-                edges.push(DepEdge {
+                edges.push(graph::DepEdge {
                     name: ident.to_string(),
                     attr,
                     ident,
@@ -124,6 +123,9 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
             if attr.path().is_ident("doc") {
                 docs.extend(quote! { #attr });
             }
+            if attr.path().is_ident("cfg") {
+                cfg.extend(quote! { #attr });
+            }
 
             // keep attributes unrelated to us
             transformed_src_content.extend(quote! { #attr });
@@ -132,12 +134,13 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
         transformed_src_content.extend(quote! {
             pub mod #ident #extra_tokens
         });
-        graph.add(
+        graph.add(graph::ModuleDecl::new(
             matches!(vis, syn::Visibility::Public(_)),
             ident,
             docs,
+            cfg,
             edges,
-        );
+        ));
     }
 
     // check - this produces the errors as tokens instead of
@@ -162,219 +165,37 @@ fn layered_crate_expand(input: syn::ItemMod) -> syn::Result<TokenStream> {
     Ok(expanded.into())
 }
 
-#[derive(Default)]
-struct DepsGraph {
-    graph: BTreeMap<String, ModuleDecl>,
-    has_circular_deps: bool,
-}
+mod graph;
 
-struct ModuleDecl {
-    /// Order of the module appearance in the source
-    order: usize,
-    /// Whether the mod has `pub`
-    is_pub: bool,
-    /// Ident for the mod
-    ident: syn::Ident,
-    /// Doc attributes for this mod
-    docs: TokenStream2,
-    /// Dependencies
-    edges: Vec<DepEdge>,
-}
-
-struct DepEdge {
-    /// The depends_on attribute
-    attr: syn::Attribute,
-    /// The identifier of the dependency
-    ident: syn::Ident,
-    /// The name of the dependency module
-    name: String,
-}
-
-impl DepsGraph {
-    fn add(&mut self, is_pub: bool, ident: syn::Ident, docs: TokenStream2, edges: Vec<DepEdge>) {
-        let order = self.graph.len();
-        self.graph.insert(
-            ident.to_string(),
-            ModuleDecl {
-                order,
-                is_pub,
-                ident,
-                docs,
-                edges,
-            },
-        );
-    }
-
-    fn check(&mut self) -> TokenStream2 {
-        let mut tokens = TokenStream2::new();
-        self.check_exists(&mut tokens);
-        let circular_deps_result = self.check_circular_deps();
-        if circular_deps_result.is_ok() {
-            // only check order if no circular deps,
-            // because it's impossible to have the right order
-            // if there are circular deps
-            self.check_attr_order(&mut tokens);
-        } else {
-            self.has_circular_deps = true;
-        }
-
-        tokens.extend(result_to_tokens(circular_deps_result));
-        tokens
-    }
-
-    // this is mut because we want to remove the dependencies
-    // that don't exist, to prevent double errors
-    fn check_exists(&mut self, errors: &mut TokenStream2) {
-        let keys = self.graph.keys().cloned().collect::<BTreeSet<_>>();
-        for entry in self.graph.values_mut() {
-            let edges = {
-                let mut edges = Vec::with_capacity(entry.edges.len());
-                std::mem::swap(&mut entry.edges, &mut edges);
-                edges
-            };
-            for edge in edges {
-                if keys.contains(&edge.name) {
-                    entry.edges.push(edge);
-                    continue;
-                }
-                let e = syn::Error::new_spanned(
-                    &edge.attr,
-                    format!("cannot find dependency: {}", edge.name),
-                )
-                .to_compile_error();
-                errors.extend(e);
-                // don't add the bad dependency to the graph
-            }
-        }
-    }
-
-    fn check_circular_deps(&self) -> syn::Result<()> {
-        let mut checked = BTreeSet::new();
-        for (name, entry) in self.graph.iter() {
-            let mut stack = vec![name.clone()];
-            self.check_circular_deps_recur(name, &entry.ident, &mut stack, &mut checked)?;
-        }
-        Ok(())
-    }
-
-    fn check_circular_deps_recur(
-        &self,
-        name: &str,
-        ident: &syn::Ident,
-        stack: &mut Vec<String>, // stack top contains name
-        checked: &mut BTreeSet<String>,
-    ) -> syn::Result<()> {
-        // already searched this node
-        if !checked.insert(name.to_owned()) {
-            return Ok(());
-        }
-        let Some(entry) = self.graph.get(name) else {
-            return Err(syn::Error::new_spanned(
-                ident,
-                format!("cannot find dependency: {}", name),
-            ));
-        };
-
-        for edge in &entry.edges {
-            if stack.contains(&edge.name) {
-                let graph = format_stack(stack, &edge.name);
-                return Err(syn::Error::new_spanned(
-                    &edge.attr,
-                    format!("circular dependency detected: {}", graph),
-                ));
-            }
-            stack.push(edge.name.clone());
-            self.check_circular_deps_recur(&edge.name, &edge.ident, stack, checked)?;
-            stack.pop().expect("underflowed dep stack, this is a bug");
-        }
-
-        Ok(())
-    }
-
-    /// Make sure the #[depends_on] attributes are in the same order
-    /// as the module declaration, to make it look nice
-    fn check_attr_order(&self, errors: &mut TokenStream2) {
-        let mut orders = Vec::<(usize, String)>::new();
-        for (name, entry) in &self.graph {
-            orders.clear();
-            let mut current_dep_order = 0;
-            for dep in &entry.edges {
-                let Some(m) = self.graph.get(&dep.name) else {
-                    continue;
-                };
-                if m.order < entry.order {
-                    let e = syn::Error::new_spanned(
-                        &entry.ident,
-                        format!(
-                            "module `{}` should be declared before its dependency `{}` to ensure top-down readability",
-                            name, dep.name
-                        ),
-                    ).to_compile_error();
-                    errors.extend(e);
-                }
-                if m.order < current_dep_order {
-                    // find the right place
-                    let mut found = false;
-                    for (order, n) in &orders {
-                        if m.order < *order {
-                            let e = syn::Error::new_spanned(
-                                &dep.ident,
-                                format!(
-                                    "#[depends_on({})] should be before #[depends_on({})] to ensure consistent order of modules",
-                                    dep.name, n
-                                ),
-                            ).to_compile_error();
-                            errors.extend(e);
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
-                        // just in case the order is messed really bad and we can't find it for
-                        // some reason, we still want to emit an error
-                        let e = syn::Error::new_spanned(
-                            &dep.ident,
-                            format!(
-                                "#[depends_on({})] should be placed in the same order the modules are declared",
-                                dep.name
-                            ),
-                        ).to_compile_error();
-                        errors.extend(e);
-                    }
-                } else {
-                    orders.push((m.order, m.ident.to_string()));
-                }
-                current_dep_order = m.order;
-            }
-        }
-    }
-
+impl graph::DepsGraph {
     fn generate_impl(&self, src_mod: &syn::Ident) -> TokenStream2 {
         let mut mod_tokens = TokenStream2::new();
         for entry in self.graph.values() {
-            mod_tokens.extend(entry.generate_mod_impl(src_mod, self.has_circular_deps));
+            mod_tokens.extend(self.generate_mod_impl(entry, src_mod, self.has_circular_deps));
         }
         mod_tokens
     }
-}
-
-fn format_stack(stack: &[String], next: &str) -> String {
-    format!("{} -> {}", stack.join(" -> "), next)
-}
-
-impl ModuleDecl {
-    fn generate_mod_impl(&self, src_mod: &syn::Ident, has_circular_deps: bool) -> TokenStream2 {
-        let vis = if self.is_pub {
+    fn generate_mod_impl(
+        &self,
+        module: &graph::ModuleDecl,
+        src_mod: &syn::Ident,
+        has_circular_deps: bool,
+    ) -> TokenStream2 {
+        let vis = if module.is_pub {
             quote! { pub }
         } else {
             quote! { pub(crate) }
         };
-        let doc = &self.docs;
-        let deps_ident = &self.ident;
+        let doc = &module.docs;
+        let cfg = &module.cfg;
+        let deps_ident = &module.ident;
 
-        if self.edges.is_empty() {
+        if module.edges.is_empty() {
             return quote_spanned! {
-                self.ident.span() => #[doc(inline)] #vis use #src_mod::#deps_ident;
+                module.ident.span() =>
+                    #cfg
+                    #[doc(inline)]
+                    #vis use #src_mod::#deps_ident;
             };
         }
 
@@ -388,17 +209,21 @@ impl ModuleDecl {
         }
 
         let mut dep_tokens = TokenStream2::new();
-        for edge in &self.edges {
+        for edge in &module.edges {
+            let dep_module = self.graph.get(&edge.name).unwrap();
+            let dep_cfg = &dep_module.cfg;
             let dep_ident = &edge.ident;
             dep_tokens.extend(quote_spanned! {
                 dep_ident.span() =>
+                    #dep_cfg
                     pub use crate::#src_mod::#dep_ident;
             });
         }
 
         quote_spanned! {
-            self.ident.span() =>
+            module.ident.span() =>
                 #doc
+                #cfg
                 #vis mod #deps_ident {
                     #[doc(inline)]
                     pub use crate::#src_mod::#deps_ident::*;
@@ -409,12 +234,5 @@ impl ModuleDecl {
                     }
                 }
         }
-    }
-}
-
-fn result_to_tokens(r: syn::Result<()>) -> TokenStream2 {
-    match r {
-        Ok(_) => quote! {},
-        Err(err) => err.to_compile_error(),
     }
 }
