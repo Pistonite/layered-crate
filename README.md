@@ -145,11 +145,12 @@ The example is using some file in `sub_system_2`:
 
 #[layered_crate::import]
 use sub_system_2::{
-    crate::util::SomeUtil,
-    crate::sub_system_1,
+    super::util::SomeUtil,
+ // ^ using `super` to mean "dependencies"
+    super::sub_system_1,
  // ^ this will error, since sub_system_1 is not declared as a dependency
     SomeThingInSubSys2,
- // ^ this is equivalent to importing from `crate::sub_system_2`
+ // ^ this is equivalent to importing from `crate::sub_system_2::SomeThingInSubSys2`
  //   i.e. the current module
 };
 ```
