@@ -52,6 +52,7 @@ This has a few advantages:
 ... and a few disadvantages:
 - Uses custom syntax
 - The enforcement is not strict, since that's outside of the power of proc-macros
+- rust-analyzer will not use this library's syntax when adding imports
 
 All said, you should do the research needed to figure out if this crate is the right approach for
 your use case.
@@ -155,7 +156,9 @@ use sub_system_2::{
 };
 ```
 
-See the [`import()`] macro for a more detailed example
+See the [`import()`] macro for a more detailed example. Also single `super`
+in the middle of the path will not work in `rust-analyzer`, see the macro
+doc for the workaround.
 
 ## Extra checks
 

@@ -63,6 +63,24 @@ pub fn layers(_attr: TokenStream, input: TokenStream) -> TokenStream {
 /// use super::*;
 /// ```
 ///
+/// # Workaround for single `super` import
+///
+/// Currently, rust-analyzer does not process "malformed" imports, including
+/// `super` in the middle of the import:
+/// ```rust,ignore
+/// #[layered_crate::import]
+/// use my_layer::super::my_dep::MyType;
+/// ```
+///
+/// While `layered-crate` transforms this correctly, rust-analyzer will not
+/// provide LSP functionality for this import (e.g. goto definition).
+///
+/// If this is an issue for you, `super_` is allowed as a workaround:
+/// ```rust,ignore
+/// #[layered_crate::import]
+/// use my_layer::super_::my_dep::MyType;
+/// ```
+///
 /// # Other checks
 /// - It will make sure all of your `super` and `self` (imports from current layer) are grouped
 ///   together for readability
