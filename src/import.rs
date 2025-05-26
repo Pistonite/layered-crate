@@ -138,6 +138,10 @@ pub fn expand(input: syn::ItemUse) -> syn::Result<TokenStream> {
         syn::UseTree::Path(path) => {
             // use layer::foo::...; -> use crate::layer::foo::...;
             // use layer::super::... -> use crate::layer::crate_::...;
+            // use layer::super_::... -> use crate::layer::crate_::...;
+            //
+            // the last one is a workaround that rust-analyzer cannot analyze
+            // `super` in the middle of the import
             let ident_str = path.ident.to_string();
             if ident_str == "crate_" {
                 let error =
@@ -145,7 +149,7 @@ pub fn expand(input: syn::ItemUse) -> syn::Result<TokenStream> {
                 let error = syn::Error::new_spanned(&path.ident, error);
                 error_tokens.extend(error.to_compile_error());
             }
-            if ident_str == "super" {
+            if ident_str == "super" || ident_str == "super_" {
                 path.ident = syn::Ident::new("crate_", Span2::call_site());
             }
         }
@@ -276,7 +280,7 @@ fn mutate_item(
                     has_self,
                     has_none_self,
                     notified_order_error,
-                )
+                );
             }
         }
         syn::UseTree::Path(path) => {
@@ -325,10 +329,11 @@ fn mutate_item(
                         }
                     }
                 }
-                if ident_str == "self" {
-                    // self can only be at top position, so we unwrap it here
-                    *tree = *path.tree.clone();
-                }
+            }
+
+            if ident_str == "self" {
+                // self can only be at top position, so we unwrap it here
+                *tree = *path.tree.clone();
             }
         }
     }

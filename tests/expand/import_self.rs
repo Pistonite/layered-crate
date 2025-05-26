@@ -23,5 +23,18 @@ mod test2 {
     };
 }
 
+mod test3 {
+    #[layered_crate::import]
+    use current::{{}, super::{MyTypeInThisLayer, MyDepInThisLayer}};
+
+    #[layered_crate::import]
+    use current::super_::{MyTypeInThisLayer, MyDepInThisLayer};
+
+    #[layered_crate::import]
+    use current::{
+        self::{MyTypeInThisLayer, MyDepInThisLayer},
+    };
+}
+
 
 fn main() {}
