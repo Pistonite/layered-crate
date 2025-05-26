@@ -1,0 +1,5 @@
+error: Please either import all current layer with or without `self::` prefix. Mixing the two styles can cause confusion.
+  --> tests/ui/import_self_style.fail.rs:12:9
+   |
+12 |         self::MyDepInThisLayer,
+   |         ^^^^

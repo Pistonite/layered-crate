@@ -133,36 +133,29 @@ Note that:
 
 This generates the dependency structures, but does not enforce them. After all,
 proc-macros have no right to disallow `use` statements in other files.
-To do that, we need to use the following trick:
+What the macro actually does is it generates helper modules that re-exports
+the dependencies.
+
+We can use the [`import()`] macro in modules to apply the restriction:
 
 The example is using some file in `sub_system_2`:
 
 ```rust,ignore
 // some file in sub_system_2, say `src/sub_system_2/foo.rs`
 
-
-// `crate_` is similar to `crate`, but only exports the modules
-// declared as dependencies
-
-use crate::sub_system_2::crate_;
-
-// simplify replace `crate` with `crate_` to import from a dependency
-
-use crate_::util::SomeUtil;
-
-// this will error, since sub_system_1 is not declared as a dependency
-
-use crate_::sub_system_1;
+#[layered_crate::import]
+use sub_system_2::{
+    super::util::SomeUtil,
+ // ^ using `super` to mean "dependencies"
+    super::sub_system_1,
+ // ^ this will error, since sub_system_1 is not declared as a dependency
+    SomeThingInSubSys2,
+ // ^ this is equivalent to importing from `crate::sub_system_2::SomeThingInSubSys2`
+ //   i.e. the current module
+};
 ```
 
-Note that usually a module should be allowed to import from itself,
-however, a module cannot be the dependency of itself. To do that,
-you would just import from the module itself like normal, using
-`crate::`, `super::`, or some other trick like
-
-```rust,ignore
-use crate::sub_system_2::{self as self_, crate_};
-```
+See the [`import()`] macro for a more detailed example
 
 ## Extra checks
 

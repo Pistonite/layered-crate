@@ -1,0 +1,150 @@
+error: Glob (i.e. `*`) cannot be used at the root of the import for the #[import] attribute
+ --> tests/ui/import_root_errors.fail.rs:4:5
+  |
+4 | use *;
+  |     ^
+
+error: Group (i.e. `use {...}`) cannot be used at the root of the import for the #[import] attribute
+ --> tests/ui/import_root_errors.fail.rs:6:5
+  |
+6 | use {A, B};
+  |     ^^^^^^
+
+error: An unnested use statement (i.e. `use c`) is used with #[import]
+       This is likely a mistake. If this is intentional, try `use crate::c;` (without the #[import])
+ --> tests/ui/import_root_errors.fail.rs:8:5
+  |
+8 | use c;
+  |     ^
+
+error: An unnested use statement (i.e. `use d as e`) is used with #[import]
+       This is likely a mistake. If this is intentional, try ` use crate::d as e;` (without the #[import])
+  --> tests/ui/import_root_errors.fail.rs:10:5
+   |
+10 | use d as e;
+   |     ^^^^^^
+
+error: Leading colons are ignored by the #[import] attribute, please remove them
+  --> tests/ui/import_root_errors.fail.rs:12:5
+   |
+12 | use ::f::{x, y};
+   |     ^^
+
+error: `crate` cannot be used with the #[import] attribute.
+       Remove `crate` and put the name of the current layer, e.g. `use my_layer::{...}`;
+  --> tests/ui/import_root_errors.fail.rs:14:5
+   |
+14 | use crate::f;
+   |     ^^^^^
+
+error: Cannot use `super` as the last segment in the #[import] attribute.
+       If you want to rename the dependency module, please rename it instead (e.g. `use w::super as deps;`).
+  --> tests/ui/import_root_errors.fail.rs:20:8
+   |
+20 | use w::super;
+   |        ^^^^^
+
+error: Cannot use `super` inside #[import].
+       If you are trying to import from the parent module, put the `super` outside.
+  --> tests/ui/import_root_errors.fail.rs:26:9
+   |
+26 | use w::{super, x};
+   |         ^^^^^
+
+error: Don't use `crate_` as it's an implementation detail.
+       Try `use w::super as deps`. If this is intentional, rename it to `crate_` with this syntax.
+  --> tests/ui/import_root_errors.fail.rs:28:8
+   |
+28 | use w::crate_;
+   |        ^^^^^^
+
+error: Don't use `crate_` as it's an implementation detail.
+       Try `use w::super as nokay`. If this is intentional, rename it to `crate_` with this syntax.
+  --> tests/ui/import_root_errors.fail.rs:30:8
+   |
+30 | use w::crate_ as nokay;
+   |        ^^^^^^
+
+error: Don't use `crate_` as it's an implementation detail.
+       If this is intentional, use `super` instead (i.e. `super as nokay`)
+  --> tests/ui/import_root_errors.fail.rs:32:9
+   |
+32 | use w::{crate_ as nokay, t};
+   |         ^^^^^^
+
+error[E0255]: the name `f` is defined multiple times
+  --> tests/ui/import_root_errors.fail.rs:14:5
+   |
+1  | mod f;
+   | ------ previous definition of the module `f` here
+...
+14 | use crate::f;
+   |     ^^^^^^^^ `f` reimported here
+   |
+   = note: `f` must be defined only once in the type namespace of this module
+help: you can use `as` to change the binding name of the import
+   |
+14 | use crate::f as other_f;
+   |              ++++++++++
+
+error[E0432]: unresolved imports `crate::f::x`, `crate::f::y`
+  --> tests/ui/import_root_errors.fail.rs:12:11
+   |
+12 | use ::f::{x, y};
+   |           ^  ^ no `y` in `f`
+   |           |
+   |           no `x` in `f`
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:16:5
+   |
+16 | use w::*;
+   |     ^ could not find `w` in the crate root
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:18:5
+   |
+18 | use w::prog;
+   |     ^ could not find `w` in the crate root
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:22:5
+   |
+22 | use w::prog as t;
+   |     ^ could not find `w` in the crate root
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:24:5
+   |
+24 | use w::super as ok;
+   |     ^ could not find `w` in the crate root
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:26:5
+   |
+26 | use w::{super, x};
+   |     ^ could not find `w` in the crate root
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:28:5
+   |
+28 | use w::crate_;
+   |     ^ could not find `w` in the crate root
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:30:5
+   |
+30 | use w::crate_ as nokay;
+   |     ^ could not find `w` in the crate root
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:32:5
+   |
+32 | use w::{crate_ as nokay, t};
+   |     ^ could not find `w` in the crate root
+
+error[E0432]: unresolved import `crate::w`
+  --> tests/ui/import_root_errors.fail.rs:34:5
+   |
+34 | use w::{super as nokay, t};
+   |     ^ could not find `w` in the crate root

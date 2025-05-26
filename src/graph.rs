@@ -92,7 +92,7 @@ impl DepsGraph {
                 }
                 let e = syn::Error::new_spanned(
                     &edge.attr,
-                    format!("cannot find dependency: {}", edge.name),
+                    format!("Cannot find dependency: {}", edge.name),
                 )
                 .to_compile_error();
                 errors.extend(e);
@@ -124,7 +124,7 @@ impl DepsGraph {
         let Some(entry) = self.graph.get(name) else {
             return Err(syn::Error::new_spanned(
                 ident,
-                format!("cannot find dependency: {}", name),
+                format!("Cannot find dependency: {}", name),
             ));
         };
 
@@ -133,7 +133,7 @@ impl DepsGraph {
                 let graph = format_stack(stack, &edge.name);
                 return Err(syn::Error::new_spanned(
                     &edge.attr,
-                    format!("circular dependency detected: {}", graph),
+                    format!("Circular dependency detected: {}", graph),
                 ));
             }
             stack.push(edge.name.clone());
@@ -159,7 +159,7 @@ impl DepsGraph {
                     let e = syn::Error::new_spanned(
                         &entry.ident,
                         format!(
-                            "module `{}` should be declared before its dependency `{}` to ensure top-down readability",
+                            "Module `{}` should be declared before its dependency `{}` to ensure top-down readability",
                             name, dep.name
                         ),
                     ).to_compile_error();

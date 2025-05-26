@@ -1,0 +1,6 @@
+error: Please group self (current layer) imports and other imports separately for readability.
+       Move this import up to be together with other `super` imports
+  --> tests/ui/import_macro_order2.fail.rs:20:9
+   |
+20 |         super::m::{a, b},
+   |         ^^^^^

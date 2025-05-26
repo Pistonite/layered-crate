@@ -1,4 +1,4 @@
-error: circular dependency detected: x -> y -> x
+error: Circular dependency detected: x -> y -> x
  --> tests/ui/cir_deps.fail.rs:7:5
   |
 7 |     #[depends_on(x)]
