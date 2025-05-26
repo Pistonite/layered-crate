@@ -1,6 +1,8 @@
-use crate::api::crate_;
-
-use crate_::{utils, sub_system_1, sub_system_2};
+#[layered_crate::import]
+use api::{
+    super::{utils, sub_system_1},
+    super::sub_system_2,
+};
 
 pub fn add(a: i32, b: i32) -> i32 {
     utils::x();

@@ -1,6 +1,6 @@
 [package]
 name = "layered-crate"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 description = "Proc-macro to declare internal dependencies amongst modules inside a crate"
 repository = "https://github/Pistonite/layered_crate"

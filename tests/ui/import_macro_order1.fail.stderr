@@ -1,0 +1,6 @@
+error: Please group self (current layer) imports and other imports separately for readability.
+       Move this import up to be together with other `self` imports
+  --> tests/ui/import_macro_order1.fail.rs:24:9
+   |
+24 |         self::MyDepInThisLayer,
+   |         ^^^^
