@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![allow(clippy::needless_doctest_main)]
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -120,7 +121,7 @@ fn prepare_workspace(
 
     log::debug!("ensuring package directory exists");
     let package_name = &manifest_info.package_name;
-    let package_dir = path.join(&package_name);
+    let package_dir = path.join(package_name);
     if !package_dir.exists() {
         log::trace!("creating package directory: {}", package_dir.display());
         std::fs::create_dir_all(&package_dir).context("failed to create package directory")?;
@@ -187,9 +188,9 @@ fn prepare_workspace(
         .entry("resolver")
         .or_insert(toml::Value::String("2".to_string()));
 
-    let mut readdir = std::fs::read_dir(temp_dir).context("failed to read temporary directory")?;
+    let readdir = std::fs::read_dir(temp_dir).context("failed to read temporary directory")?;
     let mut members = vec![];
-    while let Some(entry) = readdir.next() {
+    for entry in readdir {
         let entry = entry.context("failed to read directory entry")?;
         let entry_path = entry.path();
         if entry_path.is_dir() && entry.file_name() != "target" {

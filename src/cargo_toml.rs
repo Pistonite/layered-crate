@@ -116,11 +116,8 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
             .cloned()
     } else {
         // traverse up the directory tree to find a Cargo.toml with a [workspace] section
-        let parent_parent = parent
-            .parent()
-            .map(|p| dunce::canonicalize(p).ok())
-            .flatten();
-        let mut current_path = parent_parent.as_ref().map(|p| p.as_path());
+        let parent_parent = parent.parent().and_then(|p| dunce::canonicalize(p).ok());
+        let mut current_path = parent_parent.as_deref();
         let mut workspace_deps_out = None;
         while let Some(current) = current_path {
             log::trace!("checking directory for workspace: {}", current.display());
@@ -335,7 +332,8 @@ fn resolve_dependency_paths_in_target(
         }
     }
 
-    todo!()
+    log::trace!("finished resolving paths in 'target' section");
+    Ok(())
 }
 
 fn resolve_dependency_paths(

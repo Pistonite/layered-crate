@@ -148,7 +148,7 @@ fn resolve_items(
                     if let syn::Expr::Lit(expr) = &mut meta.value {
                         if let syn::Lit::Str(lit) = &mut expr.lit {
                             let module_path =
-                                util::resolve_path(&lit.value(), base_path).context(format!(
+                                util::resolve_path(lit.value(), base_path).context(format!(
                                     "failed to resolve path for module `{}` in {tag}",
                                     item.ident
                                 ))?;
