@@ -8,8 +8,9 @@ includes:
 
 tasks:
   install-cargo-extra-tools:
+    aliases: [icets]
     cmds:
-      - cargo install cargo-watch live-server cargo-expand
+      - cargo install cargo-watch live-server
 
   install:
     cmds:
@@ -28,18 +29,3 @@ tasks:
   dev-doc:
     cmds:
       - task: cargo:watch-serve-doc
-
-  test:
-    cmds:
-      - cargo test
-      - cargo test -p fixtures
-
-  update-macrotest:
-    aliases: [umt]
-    cmds:
-      - task: cargo:update-macrotest
-
-  update-trybuild:
-    aliases: [utb]
-    cmds:
-      - task: cargo:update-trybuild

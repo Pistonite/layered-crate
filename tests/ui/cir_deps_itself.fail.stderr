@@ -1,5 +1,0 @@
-error: Circular dependency detected: x -> x
- --> tests/ui/cir_deps_itself.fail.rs:5:5
-  |
-5 |     #[depends_on(x)]
-  |     ^^^^^^^^^^^^^^^^

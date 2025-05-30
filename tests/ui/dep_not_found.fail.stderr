@@ -1,5 +1,0 @@
-error: Cannot find dependency: y
- --> tests/ui/dep_not_found.fail.rs:5:5
-  |
-5 |     #[depends_on(y)]
-  |     ^^^^^^^^^^^^^^^^

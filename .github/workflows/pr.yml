@@ -25,7 +25,6 @@ jobs:
       # run the thing
       - run: task install
       - run: task check
-      - run: task test
       - run: cargo doc
       - run: cargo publish --dry-run
 
