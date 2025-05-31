@@ -2,24 +2,20 @@
 
 Enforce dependencies amongst internal modules in a crate
 
-```rust,ignore
-use layered_crate::layers;
+##### 0.2.0 -> 0.3.0, this tool is changed to a CLI tool rather than a proc-macro crate. See [this issue](https://github.com/Pistonite/layered-crate/issues/8) for details
 
-#[layers]
-mod src {
-    /// Public APIs
-    #[depends_on(details)]
-    #[depends_on(utils)]
-    extern crate api;
+```bash
+# build the tool from source
+cargo install layered-crate
 
-    #[depends_on(utils)]
-    pub extern crate details;
+# check internal dependencies amongst layers
+layered-crate
 
-    /// Internal utils
-    extern crate utils;
-}
+# deny unused dependencies
+RUSTFLAGS=-Dunused-imports layered-crate 
 
-pub use api::*;
+CARGO=/my-cargo layered-crate -- +nightly check --lib --color=always --features ... 
+#     ^ change the cargo binary  ^ customize args passed to cargo
 ```
 
 ## The Problem
@@ -40,136 +36,114 @@ for something on crates.io. There are several upsides and downsides to this. Jus
 - Downsides:
   - Need to publish 50 instead of 1 crate
   - Need to have a more complicated `Cargo.toml` setup
+  - Cannot have `pub(crate)` visibility or `impl` for types from dependencies
   - Might be worse for optimization since one of the factor for inlining is if
     the inlining is across a crate boundary. However I have no clue what degree of effect this has
 
-This crate takes a different approach. It uses a proc-macro and some custom
-syntax to check and enforce the dependencies at compile time, all within the same crate.
-This has a few advantages:
-- Uses the same `Cargo.toml` as before
-- The effect is invisible to people using the crate.
+This tool uses a `Layerfile.toml` to specify the internal dependencies, and
+automatically checks that the dependencies are respected in the code as
+if they were separate crates. This allows you to keep the code in a single crate
+while enforcing the internal dependencies without having to split the crate manually.
 
-... and a few disadvantages:
-- Uses custom syntax
-- The enforcement is not strict, since that's outside of the power of proc-macros
-- rust-analyzer will not use this library's syntax when adding imports
-
-All said, you should do the research needed to figure out if this crate is the right approach for
-your use case.
+It is designed to work out of the box with existing code base by adding
+the `Layerfile.toml` file. However, there are some limitations and edge cases,
+especially regarding macros, that you should read about below if you have
+regular or procedural macros in your code.
 
 ## Usage
-
-Say, you crate has this structure:
-- `api` - high level APIs that you want user to call
-- `sub_system_1` and `sub_system_2` - some sub-systems of the crate, that maybe some advanced user needs to access directly
-- `util` - Shared utility stuff that the rest of the code calls, that you don't want to export
-
-Your `src/lib.rs` might look like:
+To split your crate into layers, this tool expects your entry point (e.g. `src/lib.rs`)
+to contain module definitions that correspond to the layers you want to create.
+For example:
 ```rust,ignore
-// The example doc comments are only there as example, in reality
-// these are usually much longer and detailed
-
-/// My Public APIs
-mod api;
-#[doc(inline)]
-pub use api::*;
-
-/// Sub-system 1 if you need
-pub mod sub_system_1;
-/// Sub-system 2 if you need
-pub mod sub_system_2;
-
-/// Internal utils
-mod utils;
-```
-
-This is all fine and good, but nothing is stopping some file in `sub_system_2`
-to `use sub_system_1::xxx;`, even if that's not how you architected it.
-Let's fix that with `layered-crate`!
-
-First, you need to move `lib.rs` outside of `src` - this is so that we can
-make the module shims without changing too much of the directory structure
-```toml
-# Cargo.toml
-[lib]
-path = "lib.rs"
-```
-
-Now, change `lib.rs`:
-```rust,ignore
-use layered_crate::layers;
-
-#[layers]
-mod src {
-    /// My Public APIs
-    #[depends_on(sub_system_1)]
-    #[depends_on(sub_system_2)]
-    #[depends_on(utils)]
-    extern crate api;
-
-    /// Sub-system 1 if you need
-    #[depends_on(utils)]
-    pub extern crate sub_system_1;
-
-    /// Sub-system 2 if you need
-    #[depends_on(utils)]
-    pub extern crate sub_system_2;
-
-    /// Internal utils
-    extern crate utils;
+// src/lib.rs
+mod layer1 { // inline module
+    pub fn foo() {
+        // ...
+    }
 }
+pub use layer1::foo; // re-exporting the function
+pub mod layer2; // non-inline module at layer2.rs or layer2/mod.rs
 
-#[doc(inline)]
-pub use api::*;
+/* ... */
+```
+Note that both private and public items in the module are checked,
+
+Then, create a `Layerfile.toml` next to `Cargo.toml` with the following content:
+```toml
+[crate]
+exclude = [] 
+# ^ optional, list of modules to delete when checking layers
+# note this is different from ignoring the layer/module
+# to ignore something, just don't have a [layer.<name>] section for it
+
+[layer.layer1] # for each module you want to check in lib.rs, create a table for it
+#      ^ `layer1` corresponds to `mod layer1` in the code above
+depends-on = ["layer2"] # list of layers that this layer depends on
+impl = [] # any layer specified here will be checked together, see below for more details
+
+[layer.layer2]
+# ^ if the layer is at the bottom (doesn't depend on any other layer),
+# you still need to create an empty table for it like this
 ```
 
-Note that:
-- `extern crate` is used because non-inline modules in proc-macro inputs are unstable. This may change in the future to just `mod`
-- the `mod src` corresponds to the `src` directory. Now that your original modules
-  are located at `src::` path, we can use re-exports to make a shim module with the
-  same name plus dependency info
-- Inside `mod src`, the use of `pub` is the same as before. The module is accessbie
-  at `your_crate::your_module` if it's `pub`. (`pub` on `mod src` has no effect and `src` is never exported.)
-- Re-exports and doc comments work just as if the module is declared at the outer scope.
+Now, simply run `layered-crate` to check for violations - you will get an error if anything in `layer2` imports from `layer1`!
 
-This generates the dependency structures, but does not enforce them. After all,
-proc-macros have no right to disallow `use` statements in other files.
-What the macro actually does is it generates helper modules that re-exports
-the dependencies.
-
-We can use the [`import()`] macro in modules to apply the restriction:
-
-The example is using some file in `sub_system_2`:
-
-```rust,ignore
-// some file in sub_system_2, say `src/sub_system_2/foo.rs`
-
-#[layered_crate::import]
-use sub_system_2::{
-    super::util::SomeUtil,
- // ^ using `super` to mean "dependencies"
-    super::sub_system_1,
- // ^ this will error, since sub_system_1 is not declared as a dependency
-    SomeThingInSubSys2,
- // ^ this is equivalent to importing from `crate::sub_system_2::SomeThingInSubSys2`
- //   i.e. the current module
-};
+To detect and deny unused layers specified in `depends-on`, you can use the `RUSTFLAGS` environment variable
+to pass custom compiler flags to cargo
+```bash
+RUSTFLAGS=-Dunused-imports layered-crate
 ```
 
-See the [`import()`] macro for a more detailed example. Also single `super`
-in the middle of the path will not work in `rust-analyzer`, see the macro
-doc for the workaround.
+During the layer checking, the layer and its dependencies are split
+into different crates, so features that normally would work for you in the 
+same-crate setup might not work as expected. Please read the limitations below
 
-## Extra checks
+## `pub(crate)` visibility and `impl` for types from dependencies
+If one of your layers depends on an item that is `pub(crate)` in a layer below,
+or needs to implement a type for a layer below, you will get an error since
+the layer and its dependencies are split into different crates during layer checking.
 
-The macro provides extra checks:
-- Circular dependency is not allowed
-- For readability, the modules need to be declared top-down. If A depends on B,
-  you need to declare A first, then B.
-- The `#[depends_on]` attribute needs to be sorted according to the
-  same order the modules are defined in
-- Warning if `#[depends_on]` specified for a module that doesn't actually use the dependency.
-  Note this check is actually done by the compiler, and it only counts if you are using
-  the dependency through the generated `crate_` module.
+To workaround this, add the `impl` property to the layer in `Layerfile.toml`:
 
-You can see the checks in action in the tests of this crate.
+```toml
+[layer.layer1]
+depends-on = ["layer2"]
+impl = ["layer2"]       # <- add this
+
+[layer.layer2]
+```
+When checking `layer1`, the tool will also put `layer2` in the same test crate as `layer1`.
+However, the check is loosened in this case, since `layer1` can also import
+from `layer2`'s dependencies (i.e. transitive dependencies).
+
+`layer2` still cannot import from `layer1` - you will get an error when checking `layer2`
+
+## Crate name in macro expansion
+Macro expansion can give some nasty errors - especially procedural macros.
+If your crate uses macros (including procedural macros), please read 
+[this issue on GitHub](https://github.com/Pistonite/layered-crate/issues/8#issuecomment-2923598649)
+before considering this tool.
+
+## Other Limitations
+Here are some more limitations of the tool other than the ones
+mentioned above:
+
+1. Currently, we can only check library targets. For binary target,
+   you have to declare a library target, then use that in your `main.rs`:
+   ```toml
+   # these are the defaults so you can omit them
+   [lib]
+   name = "my_lib"      
+   path = "src/lib.rs"
+
+   [[bin]]
+   name = "my_bin"
+   path = "src/main.rs"
+   ```
+   ```rust
+   // src/main.rs
+   fn main() { my_lib::main_internal() }
+   ```
+   
+2. We do not support modules produced by macros in the entry point, as we purely
+   parse the entry point as syntax tree. Macros in other modules are fine.
