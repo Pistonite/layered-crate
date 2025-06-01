@@ -6,11 +6,18 @@ includes:
     optional: true
     internal: true
 
+  common:
+    taskfile: ./mono-dev/task/common.yaml
+    optional: true
+    internal: true
+
 tasks:
   install-cargo-extra-tools:
     aliases: [icets]
     cmds:
-      - cargo install cargo-watch live-server
+      - task: common:cargo-binstall
+        vars:
+          PACKAGES: cargo-watch live-server
 
   install:
     cmds:

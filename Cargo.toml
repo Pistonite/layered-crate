@@ -1,6 +1,6 @@
 [package]
 name = "layered-crate"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "Tool to declare and verify internal dependencies amongst modules inside a crate"
 repository = "https://github/Pistonite/layered-crate"
@@ -27,3 +27,8 @@ serde = { version = "1.0.219", features = ["derive"] }
 syn = { version = "2.0.101", features = ["full"] }
 toml = "0.8.22"
 which = "7.0.3"
+
+[package.metadata.binstall.signing]
+algorithm = "minisign"
+pubkey = "RWThJQKJaXayoZBe0YV5LV4KFkQwcqQ6Fg9dJBz18JnpHGdf/cHUyKs+"
+

@@ -1,0 +1,47 @@
+name: Build
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Pistonight/mono-dev/actions/setup@main
+        with:
+          mono-dev: true
+          rust: stable
+      - run: task check
+      - run: cargo doc
+      - run: cargo publish --dry-run
+
+  build:
+    strategy:
+      matrix:
+        include:
+          - image: ubuntu-latest
+            target: x64
+          - image: ubuntu-24.04-arm
+            target: arm64
+          - image: macos-latest
+            target: x64
+          - image: macos-latest
+            target: arm64
+          - image: windows-latest
+            target: x64
+          - image: windows-11-arm
+            target: arm64
+    runs-on: ${{ matrix.image }}
+    steps:
+      - uses: Pistonight/mono-dev/actions/setup@main
+        with:
+          rust: stable
+          rust-native: ${{ matrix.target }}
+      - uses: Pistonight/mono-dev/actions/rust-xplat@main
+        with:
+          arch: ${{ matrix.target }}
+          binary: layered-crate
