@@ -94,7 +94,7 @@ impl EntryFile {
             .map(|dep| syn::Ident::new(dep, Span::call_site()))
             .collect::<Vec<_>>();
 
-        // use use rustfmt::skip to avoid formatting the original source code
+        // use rustfmt::skip to avoid formatting the original source code
         // unfortunately that also skips formatting this node in the test file
         let test_file = quote! {
             #(#file_attrs)*
