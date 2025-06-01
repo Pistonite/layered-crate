@@ -1,9 +1,9 @@
 [package]
 name = "layered-crate"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "Tool to declare and verify internal dependencies amongst modules inside a crate"
-repository = "https://github/Pistonite/layered-crate"
+repository = "https://github.com/Pistonite/layered-crate"
 license = "MIT"
 authors = ["Pistonight <pistonknight@outlook.com>"]
 keywords = ["layered", "crate", "dependencies", "module"]
