@@ -45,25 +45,9 @@ pub fn build_by_layers(
     // now we check each layer
     message("checking layers...");
     for layer in &dep_graph.top_down_order {
-        let mut all_test_modules = vec![layer.to_string()];
-        all_test_modules.extend(layerfile.layer.get(layer).unwrap().impl_.iter().cloned());
-        loop {
-            let mut to_add = vec![];
-            for m in &all_test_modules {
-                to_add.extend(
-                    layerfile
-                        .layer
-                        .get(m)
-                        .map(|l| l.depends_on.clone())
-                        .unwrap_or_default(),
-                );
-            }
-            to_add.retain(|m| !all_test_modules.contains(m));
-            if to_add.is_empty() {
-                break;
-            }
-            all_test_modules.extend(to_add);
-        }
+        let all_test_modules = layerfile
+            .get_test_modules(layer)
+            .with_context(|| format!("failed to get test modules for layer `{layer}`"))?;
 
         let mut all_deps = BTreeSet::new();
         // collect all dependencies of the layer
@@ -89,7 +73,9 @@ pub fn build_by_layers(
         if !status.success() {
             println!("{}", stderr);
             error_message(format!("FAIL {layer}"));
-            bail!("layer `{layer}` failed to build - probably missing dependencies");
+            bail!(
+                "layer `{layer}` failed to build - check if there are missing dependencies or unused dependencies"
+            );
         }
         message(format!("PASS {layer}"));
     }

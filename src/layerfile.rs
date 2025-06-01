@@ -32,6 +32,44 @@ pub struct Layer {
     pub impl_: Vec<String>,
 }
 
+impl LayerFile {
+    /// Get all modules to be put in the test library for the given layer.
+    pub fn get_test_modules(&self, layer: &str) -> anyhow::Result<Vec<String>> {
+        log::debug!("getting test modules for layer `{layer}`");
+        // test modules are:
+        // - current layer
+        // - the "impl"s of the current layer
+        // - the "impl"s of the "impl"s of the current layer, ...
+        let mut output = vec![layer.to_string()];
+        let mut to_add = vec![];
+        loop {
+            to_add.clear();
+            for m in &output {
+                let Some(layer) = self.layer.get(m) else {
+                    bail!("layer `{m}` not found, this is a bug");
+                };
+                for dep in &layer.impl_ {
+                    to_add.push(dep);
+                }
+            }
+            let mut added = false;
+            output.reserve(to_add.len());
+            for s in &to_add {
+                if output.contains(s) {
+                    continue;
+                }
+                added = true;
+                output.push(s.to_string());
+            }
+            if !added {
+                break;
+            }
+        }
+        log::debug!("test modules for layer `{layer}`: {:?}", output);
+        Ok(output)
+    }
+}
+
 pub struct DepGraph<'a> {
     pub deps: BTreeMap<String, &'a [String]>,
     /// The top-down order of modules based on dependencies
