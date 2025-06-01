@@ -1,0 +1,17 @@
+name: Release
+on:
+  push:
+    tags:
+      - v*.*.*
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+    steps:
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: Pistonight/mono-dev/actions/release@main
+        with:
+          artifacts-workflow: build.yml
+          artifacts-path: release
+          pack: layered-crate-*
+          minisign-key: ${{ secrets.MINISIGN_KEY }}

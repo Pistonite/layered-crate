@@ -5,7 +5,9 @@ Enforce dependencies amongst internal modules in a crate
 ##### 0.2.0 -> 0.3.0, this tool is changed to a CLI tool rather than a proc-macro crate. See [this issue](https://github.com/Pistonite/layered-crate/issues/8) for details
 
 ```bash
-# build the tool from source
+# install with cargo-binstall from binary release
+cargo binstall layered-crate
+# or build the tool from source
 cargo install layered-crate
 
 # check internal dependencies amongst layers
