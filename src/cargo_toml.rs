@@ -51,11 +51,14 @@ pub fn manifest_has_workspace(manifest_path: &Path) -> bool {
 
 pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
     log::debug!("reading Cargo.toml at {}", manifest_path.display());
-    let path = Path::new(manifest_path);
+    let path = dunce::canonicalize(manifest_path).context("failed to read manifest path")?;
     let parent = path
         .parent()
         .context("failed to get parent directory of Cargo.toml")?;
-    let cargo_toml_string = std::fs::read_to_string(path).context("failed to read Cargo.toml")?;
+    let parent_relative = manifest_path
+        .parent()
+        .context("failed to get parent directory of Cargo.toml")?;
+    let cargo_toml_string = std::fs::read_to_string(&path).context("failed to read Cargo.toml")?;
     let mut cargo_toml = cargo_toml_string
         .parse::<toml::Table>()
         .context("Failed to parse Cargo.toml as TOML")?;
@@ -86,7 +89,7 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
     };
     log::debug!("lib entrypoint: {lib_entrypoint}");
 
-    let actual_lib_path = parent.join(&lib_entrypoint);
+    let actual_lib_path = parent_relative.join(&lib_entrypoint);
     let lib_entrypoint_content = std::fs::read_to_string(&actual_lib_path).with_context(|| {
         format!(
             "failed to read lib entrypoint at {}",
@@ -115,6 +118,7 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
             .and_then(|deps| deps.as_table())
             .cloned()
     } else {
+        log::debug!("traversing up the directories to find workspace");
         // traverse up the directory tree to find a Cargo.toml with a [workspace] section
         let parent_parent = parent.parent().and_then(|p| dunce::canonicalize(p).ok());
         let mut current_path = parent_parent.as_deref();
