@@ -35,7 +35,7 @@ struct Cli {
 }
 
 fn main() -> ExitCode {
-    colog::init();
+    env_logger::init();
     let start_time = Instant::now();
     let args = Cli::parse();
     if let Err(e) = main_internal(args) {
