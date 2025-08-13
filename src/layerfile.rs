@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Context, bail};
-use serde::{Deserialize, Serialize};
+use cu::pre::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -34,8 +33,8 @@ pub struct Layer {
 
 impl LayerFile {
     /// Get all modules to be put in the test library for the given layer.
-    pub fn get_test_modules(&self, layer: &str) -> anyhow::Result<Vec<String>> {
-        log::debug!("getting test modules for layer `{layer}`");
+    pub fn get_test_modules(&self, layer: &str) -> cu::Result<Vec<String>> {
+        cu::debug!("getting test modules for layer `{layer}`");
         // test modules are:
         // - current layer
         // - the "impl"s of the current layer
@@ -46,7 +45,7 @@ impl LayerFile {
             to_add.clear();
             for m in &output {
                 let Some(layer) = self.layer.get(m) else {
-                    bail!("layer `{m}` not found, this is a bug");
+                    cu::bail!("layer `{m}` not found, this is a bug");
                 };
                 for dep in &layer.impl_ {
                     to_add.push(dep);
@@ -65,7 +64,7 @@ impl LayerFile {
                 break;
             }
         }
-        log::debug!("test modules for layer `{layer}`: {:?}", output);
+        cu::debug!("test modules for layer `{layer}`: {:?}", output);
         Ok(output)
     }
 }
@@ -80,32 +79,32 @@ pub struct DepGraph<'a> {
 }
 
 impl<'a> DepGraph<'a> {
-    pub fn build(layers: &'a BTreeMap<String, Layer>) -> anyhow::Result<Self> {
-        log::debug!("building dependency graph from layers");
+    pub fn build(layers: &'a BTreeMap<String, Layer>) -> cu::Result<Self> {
+        cu::debug!("building dependency graph from layers");
 
         let mut deps = BTreeMap::new();
         let mut temp_deps_for_building = BTreeMap::new();
         for (name, layer) in layers {
-            log::trace!("layer: {name} -> {:?}", layer.depends_on);
+            cu::trace!("layer: {name} -> {:?}", layer.depends_on);
             deps.insert(name.clone(), &layer.depends_on[..]);
             temp_deps_for_building.insert(name.clone(), layer.depends_on.clone());
         }
 
         check_circular_dependencies(&deps).context("circular dependency detected")?;
-        log::debug!("dependency graph built successfully");
+        cu::debug!("dependency graph built successfully");
 
-        log::debug!("building topological order from dependencies");
+        cu::debug!("building topological order from dependencies");
         let mut seen = BTreeSet::new();
         let mut bottom_up_order = Vec::new();
         while !temp_deps_for_building.is_empty() {
             for (name, mut deps) in std::mem::take(&mut temp_deps_for_building) {
                 deps.retain(|dep| !seen.contains(dep));
-                log::trace!(
+                cu::trace!(
                     "processing module `{name}`, remaining dependencies: {:?}",
                     deps
                 );
                 if deps.is_empty() {
-                    log::trace!("adding module `{name}`");
+                    cu::trace!("adding module `{name}`");
                     seen.insert(name.clone());
                     bottom_up_order.push(name);
                     continue;
@@ -113,7 +112,7 @@ impl<'a> DepGraph<'a> {
                 temp_deps_for_building.insert(name, deps);
             }
         }
-        log::debug!("bottom-up order: {:?}", bottom_up_order);
+        cu::debug!("bottom-up order: {:?}", bottom_up_order);
 
         Ok(Self {
             deps,
@@ -122,14 +121,14 @@ impl<'a> DepGraph<'a> {
     }
 }
 
-fn check_circular_dependencies(deps: &BTreeMap<String, &[String]>) -> anyhow::Result<()> {
+fn check_circular_dependencies(deps: &BTreeMap<String, &[String]>) -> cu::Result<()> {
     let mut checked = BTreeSet::new();
     for name in deps.keys() {
-        log::trace!("checking circular dependencies for module `{name}`");
+        cu::trace!("checking circular dependencies for module `{name}`");
         let mut stack = vec![name.as_str()];
         check_circular_dependencies_recur(deps, name, &mut stack, &mut checked)?;
     }
-    log::debug!("no circular dependencies found");
+    cu::debug!("no circular dependencies found");
     Ok(())
 }
 
@@ -138,13 +137,13 @@ fn check_circular_dependencies_recur<'a>(
     curr: &str,
     stack: &mut Vec<&'a str>,
     checked: &mut BTreeSet<String>,
-) -> anyhow::Result<()> {
+) -> cu::Result<()> {
     if !checked.insert(curr.to_string()) {
         // Already checked this module, no need to check again
         return Ok(());
     }
     let Some(edges) = deps.get(curr) else {
-        bail!(
+        cu::bail!(
             "module `{curr}` not found in dependency graph, stack: {}. (You need to declare [layer.{curr}] even if it has no dependencies",
             format_stack_with_no_next(stack)
         );
@@ -153,12 +152,12 @@ fn check_circular_dependencies_recur<'a>(
     for edge in *edges {
         if stack.iter().any(|&s| s == edge) {
             let graph = format_stack(stack, edge);
-            bail!("circular dependency detected: {graph}");
+            cu::bail!("circular dependency detected: {graph}");
         }
         stack.push(edge);
         check_circular_dependencies_recur(deps, edge, stack, checked)?;
         if stack.pop().is_none() {
-            bail!("underflowed dep stack, this is a bug");
+            cu::bail!("underflowed dep stack, this is a bug");
         }
     }
 

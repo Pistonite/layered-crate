@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path};
 
-use anyhow::{Context, bail};
+use cu::pre::*;
 
 use crate::util;
 
@@ -30,50 +30,49 @@ pub struct CargoManifestInfo {
 }
 
 pub fn manifest_has_workspace(manifest_path: &Path) -> bool {
-    log::debug!(
-        "checking if Cargo.toml at {} has a workspace section",
+    cu::debug!(
+        "checking if Cargo.toml at '{}' has a workspace section",
         manifest_path.display()
     );
-    let Ok(cargo_toml_string) = std::fs::read_to_string(manifest_path) else {
-        log::debug!(
-            "failed to read Cargo.toml at {}, assuming no workspace section",
+    let Ok(cargo_toml_string) = cu::fs::read_string(manifest_path) else {
+        cu::debug!(
+            "failed to read Cargo.toml at '{}', assuming no workspace section",
             manifest_path.display()
         );
         return false;
     };
-    let Ok(cargo_toml) = cargo_toml_string.parse::<toml::Table>() else {
-        log::debug!("failed to parse Cargo.toml as TOML, assuming no workspace section");
+    let Ok(cargo_toml) = toml::parse::<toml::Table>(&cargo_toml_string) else {
+        cu::debug!("failed to parse Cargo.toml as TOML, assuming no workspace section");
         return false;
     };
 
     cargo_toml.get("workspace").is_some()
 }
 
-pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
-    log::debug!("reading Cargo.toml at {}", manifest_path.display());
-    let path = dunce::canonicalize(manifest_path).context("failed to read manifest path")?;
-    let parent = path
+pub fn prepare(manifest_path: &Path) -> cu::Result<CargoManifestInfo> {
+    cu::debug!("reading Cargo.toml at {}", manifest_path.display());
+    let manifest_path_abs = manifest_path
+        .normalize_exists()
+        .context("failed to read Cargo.toml manifest")?;
+    let manifest_dir_abs = manifest_path_abs.parent_abs()?;
+    let manifest_dir_rel = manifest_path
         .parent()
         .context("failed to get parent directory of Cargo.toml")?;
-    let parent_relative = manifest_path
-        .parent()
-        .context("failed to get parent directory of Cargo.toml")?;
-    let cargo_toml_string = std::fs::read_to_string(&path).context("failed to read Cargo.toml")?;
-    let mut cargo_toml = cargo_toml_string
-        .parse::<toml::Table>()
-        .context("Failed to parse Cargo.toml as TOML")?;
 
-    log::trace!("parsed Cargo.toml: {cargo_toml:#?}");
-    log::debug!("reading package.name");
+    let mut cargo_toml = toml::read::<toml::Table>(cu::fs::reader(&manifest_path_abs)?)
+        .context("failed to parse Cargo.toml")?;
+
+    cu::trace!("parsed Cargo.toml: {cargo_toml:#?}");
+    cu::debug!("reading package.name");
     let package_name = cargo_toml
         .get("package")
         .and_then(|pkg| pkg.get("name"))
         .and_then(|name| name.as_str())
         .map(String::from)
         .context("Failed to read package.name from Cargo.toml")?;
-    log::debug!("package name: {package_name}");
+    cu::debug!("package name: {package_name}");
 
-    log::debug!("finding lib entrypoint");
+    cu::debug!("finding lib entrypoint");
     let lib_entrypoint = match cargo_toml.get("lib") {
         Some(lib) => {
             let lib_entrypoint = lib
@@ -83,69 +82,65 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
             lib_entrypoint.to_string()
         }
         None => {
-            log::trace!("no lib section found in Cargo.toml, assuming default src/lib.rs");
+            cu::debug!("no lib section found in Cargo.toml, assuming default src/lib.rs");
             "src/lib.rs".to_string()
         }
     };
-    log::debug!("lib entrypoint: {lib_entrypoint}");
+    cu::debug!("lib entrypoint: {lib_entrypoint}");
 
-    let actual_lib_path = parent_relative.join(&lib_entrypoint);
-    let lib_entrypoint_content = std::fs::read_to_string(&actual_lib_path).with_context(|| {
-        format!(
-            "failed to read lib entrypoint at {}",
-            actual_lib_path.display()
-        )
-    })?;
+    let actual_lib_path = manifest_dir_rel.join(&lib_entrypoint);
+    let lib_entrypoint_content =
+        cu::fs::read_string(&actual_lib_path).context("failed to read lib entrypoint")?;
 
     // don't allow absolute paths in the lib entrypoint, for now
     // this is because we are not changing the content in Cargo.toml,
     // just copying the entry point file from the original location
     // to the temporary directory
     if actual_lib_path.is_absolute() {
-        bail!(
-            "lib entrypoint path is absolute: {}",
+        cu::error!(
+            "lib entry point path is absolute: {}",
             actual_lib_path.display()
         );
+        cu::warn!("absolute lib entry point path is not supported right now.");
+        cu::hint!(
+            "this is because we need to generate a modified entry point at the same relative path as the original crate."
+        );
+        cu::hint!(
+            "if the lib entry point path is absolute, the generated Cargo.toml needs to be modified as well."
+        );
+        cu::bail!("lib entry point path is absolute");
     }
 
-    log::debug!("checking if we are in a workspace");
+    cu::debug!("checking if we are in a workspace");
     let workspace_deps = if let Some(workspace) = cargo_toml.get_mut("workspace") {
-        log::debug!("found workspace section in Cargo.toml");
-        resolve_paths_in_workspace(workspace, parent)
+        cu::debug!("found workspace section in Cargo.toml");
+        resolve_paths_in_workspace(workspace, &manifest_dir_abs)
             .context("failed to resolve paths in workspace section")?;
         workspace
             .get("dependencies")
             .and_then(|deps| deps.as_table())
             .cloned()
     } else {
-        log::debug!("traversing up the directories to find workspace");
+        cu::debug!("traversing up the directories to find workspace");
         // traverse up the directory tree to find a Cargo.toml with a [workspace] section
-        let parent_parent = parent.parent().and_then(|p| dunce::canonicalize(p).ok());
+        let parent_parent = manifest_dir_abs.parent_abs().ok();
         let mut current_path = parent_parent.as_deref();
         let mut workspace_deps_out = None;
         while let Some(current) = current_path {
-            log::trace!("checking directory for workspace: {}", current.display());
+            cu::trace!("checking directory for workspace: {}", current.display());
             let workspace_manifest_path = current.join("Cargo.toml");
             if !workspace_manifest_path.exists() {
-                log::trace!("no Cargo.toml found in {}, skipping", current.display());
+                cu::trace!("no Cargo.toml found in {}, skipping", current.display());
                 current_path = current.parent();
                 continue;
             }
-            let mut workspace_toml = match std::fs::read_to_string(&workspace_manifest_path) {
-                Ok(content) => match content.parse::<toml::Table>() {
-                    Ok(table) => table,
-                    Err(e) => {
-                        log::error!(
-                            "failed to parse Cargo.toml at {}: {e}, will skip this one",
-                            workspace_manifest_path.display()
-                        );
-                        current_path = current.parent();
-                        continue;
-                    }
-                },
+            let mut workspace_toml = match cu::fs::read_string(&workspace_manifest_path)
+                .and_then(|x| toml::parse::<toml::Table>(&x))
+            {
+                Ok(table) => table,
                 Err(e) => {
-                    log::error!(
-                        "failed to read Cargo.toml at {}: {e}, will skip this one",
+                    cu::error!(
+                        "failed to parse Cargo.toml at {}: {e}, will skip this one",
                         workspace_manifest_path.display()
                     );
                     current_path = current.parent();
@@ -153,20 +148,20 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
                 }
             };
             if let Some(workspace_table) = workspace_toml.get_mut("workspace") {
-                log::debug!(
+                cu::debug!(
                     "found workspace section in Cargo.toml at {}",
                     workspace_manifest_path.display()
                 );
                 resolve_paths_in_workspace(workspace_table, current)
                     .context("failed to resolve paths in workspace section")?;
-                log::debug!("getting workspace dependencies");
+                cu::debug!("getting workspace dependencies");
                 workspace_deps_out = workspace_table
                     .get("dependencies")
                     .and_then(|deps| deps.as_table())
                     .cloned();
                 break;
             } else {
-                log::trace!(
+                cu::trace!(
                     "no workspace section found in Cargo.toml at {}, continuing search",
                     workspace_manifest_path.display()
                 );
@@ -175,22 +170,26 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
         }
         workspace_deps_out
     };
-    log::debug!("workspace dependencies: {:#?}", workspace_deps);
+    cu::debug!("workspace dependencies: {:#?}", workspace_deps);
 
-    log::debug!("resolving dependency paths in Cargo.toml");
-    resolve_dependency_paths(&mut cargo_toml, parent, workspace_deps.as_ref())
+    cu::debug!("resolving dependency paths in Cargo.toml");
+    resolve_dependency_paths(&mut cargo_toml, &manifest_dir_abs, workspace_deps.as_ref())
         .context("failed to resolve dependency paths in Cargo.toml")?;
 
     match cargo_toml.get_mut("target") {
         Some(targets_table) => {
-            resolve_dependency_paths_in_target(targets_table, parent, workspace_deps.as_ref())
-                .context("failed to resolve dependency paths in 'target' section")?;
+            resolve_dependency_paths_in_target(
+                targets_table,
+                &manifest_dir_abs,
+                workspace_deps.as_ref(),
+            )
+            .context("failed to resolve dependency paths in 'target' section")?;
         }
         None => {
-            log::trace!("no 'target' section found in Cargo.toml, skipping path resolution");
+            cu::trace!("no 'target' section found in Cargo.toml, skipping path resolution");
         }
     }
-    log::debug!("finished resolving dependency paths in Cargo.toml");
+    cu::debug!("finished resolving dependency paths in Cargo.toml");
 
     let resolved_dependencies = cargo_toml
         .get("dependencies")
@@ -205,7 +204,7 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
         .and_then(|target| target.as_table())
         .cloned();
 
-    log::debug!("extracting features from Cargo.toml");
+    cu::debug!("extracting features from Cargo.toml");
     let feature_table = cargo_toml.get("features").and_then(|f| f.as_table());
     let (dep_features, default_features) = match feature_table {
         Some(x) => {
@@ -216,7 +215,7 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
                     for dep in deps {
                         if let Some(dep_str) = dep.as_str() {
                             if dep_str.starts_with("dep:") {
-                                log::trace!(
+                                cu::trace!(
                                     "found dependency feature: {} in feature '{}'",
                                     dep_str,
                                     fname
@@ -226,7 +225,7 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
                         }
                     }
                 } else {
-                    log::warn!("feature '{}' is not an array, skipping dependencies", fname);
+                    cu::warn!("feature '{}' is not an array, skipping dependencies", fname);
                 }
                 dep_features.insert(fname.clone(), dep_features_list);
             }
@@ -242,15 +241,15 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
             (dep_features, default_features)
         }
         None => {
-            log::trace!("no features section found in Cargo.toml, using empty features");
+            cu::trace!("no features section found in Cargo.toml, using empty features");
             Default::default()
         }
     };
-    log::debug!("dep_features: {dep_features:?}, default features: {default_features:?}");
+    cu::debug!("dep_features: {dep_features:?}, default features: {default_features:?}");
 
     let content =
-        toml::to_string(&cargo_toml).context("failed to serialize modified Cargo.toml")?;
-    log::trace!("modified Cargo.toml content: {content}");
+        toml::stringify(&cargo_toml).context("failed to serialize modified Cargo.toml")?;
+    cu::trace!("modified Cargo.toml content: {content}");
 
     Ok(CargoManifestInfo {
         package_name,
@@ -268,48 +267,43 @@ pub fn prepare(manifest_path: &Path) -> anyhow::Result<CargoManifestInfo> {
 fn resolve_paths_in_workspace(
     workspace_table: &mut toml::Value,
     base_path: &Path,
-) -> anyhow::Result<()> {
+) -> cu::Result<()> {
     let Some(workspace_table) = workspace_table.as_table_mut() else {
-        log::trace!("found 'workspace' section but not a table, skipping path resolution");
+        cu::trace!("found 'workspace' section but not a table, skipping path resolution");
         return Ok(());
     };
     if let Some(members) = workspace_table.get_mut("members") {
-        log::debug!("found 'members' section in workspace, resolving paths");
+        cu::trace!("found 'members' section in workspace, resolving paths");
         if let Some(members) = members.as_array_mut() {
             for m in members {
-                if let Some(path_str) = m.as_str() {
-                    log::debug!("resolving path for workspace member: {path_str}");
-                    match util::resolve_path(path_str, base_path) {
-                        Ok(resolved_path) => {
-                            log::debug!(
-                                "resolved path for workspace member '{path_str}': {resolved_path}"
-                            );
-                            *m = resolved_path.into();
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "failed to resolve path for workspace member '{path_str}': {e}"
-                            );
-                            bail!(e); // bail since if we ignore it, it might be confusing later
-                        }
-                    }
-                } else {
-                    log::trace!("workspace member is not a string, skipping path resolution");
-                }
+                let Some(path_str) = m.as_str() else {
+                    cu::trace!("workspace member is not a string, skipping path resolution");
+                    continue;
+                };
+                cu::trace!("resolving path for workspace member '{path_str}'");
+                let resolved_path = cu::check!(
+                    util::resolve_path(path_str, base_path),
+                    error!("failed to resolve path for workspace member '{path_str}'")
+                )?;
+                cu::debug!("resolved path for workspace member '{path_str}': {resolved_path}");
+                *m = resolved_path.into();
             }
         } else {
-            log::trace!("'members' section is not an array, skipping path resolution");
+            cu::trace!("'members' section is not an array, skipping path resolution");
         }
     }
-    if let Some(dependencies) = workspace_table.get_mut("dependencies") {
-        log::debug!("found 'dependencies' section in workspace, resolving paths");
-        resolve_dependency_paths_in_table(dependencies, base_path, None)
-            .context("failed to resolve dependency paths in 'dependencies' section")?;
-    } else {
-        log::trace!("no 'dependencies' section found in workspace, skipping path resolution");
+    match workspace_table.get_mut("dependencies") {
+        Some(dependencies) => {
+            cu::debug!("found 'dependencies' section in workspace, resolving paths");
+            resolve_dependency_paths_in_table(dependencies, base_path, None)
+                .context("failed to resolve dependency paths in 'dependencies' section")?;
+        }
+        None => {
+            cu::trace!("no 'dependencies' section found in workspace, skipping path resolution")
+        }
     }
 
-    log::trace!("finished resolving paths in 'workspace' section");
+    cu::trace!("finished resolving paths in 'workspace' section");
     Ok(())
 }
 
@@ -317,26 +311,23 @@ fn resolve_dependency_paths_in_target(
     targets_table: &mut toml::Value,
     base_path: &Path,
     workspace_deps: Option<&toml::Table>,
-) -> anyhow::Result<()> {
+) -> cu::Result<()> {
     let Some(targets_table) = targets_table.as_table_mut() else {
-        log::trace!("found 'target' section but not a table, skipping path resolution");
+        cu::trace!("found 'target' section but not a table, skipping path resolution");
         return Ok(());
     };
-    log::debug!("resolving paths in 'target' section");
+    cu::debug!("resolving paths in 'target' section");
     for (target, value) in targets_table {
-        match value.as_table_mut() {
-            Some(table) => {
-                log::debug!("resolving paths for target: {target}");
-                resolve_dependency_paths(table, base_path, workspace_deps)
-                    .context("failed to resolve dependency paths in target")?;
-            }
-            None => {
-                log::trace!("target '{target}' is not a table, skipping path resolution");
-            }
-        }
+        let Some(table) = value.as_table_mut() else {
+            cu::trace!("target '{target}' is not a table, skipping path resolution");
+            continue;
+        };
+        cu::trace!("resolving paths for target: {target}");
+        resolve_dependency_paths(table, base_path, workspace_deps)
+            .context("failed to resolve dependency paths in target")?;
     }
 
-    log::trace!("finished resolving paths in 'target' section");
+    cu::trace!("finished resolving paths in 'target' section");
     Ok(())
 }
 
@@ -344,20 +335,17 @@ fn resolve_dependency_paths(
     table: &mut toml::Table,
     base_path: &Path,
     workspace_deps: Option<&toml::Table>,
-) -> anyhow::Result<()> {
+) -> cu::Result<()> {
     for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        match table.get_mut(key) {
-            Some(dependencies) => {
-                log::debug!("found '{key}' section, resolving paths");
-                resolve_dependency_paths_in_table(dependencies, base_path, workspace_deps)
-                    .context("Failed to resolve dependency paths in '{dependencies}'")?;
-            }
-            None => {
-                log::trace!("no '{key}' section, skipping path resolution");
-            }
-        }
+        let Some(dependencies) = table.get_mut(key) else {
+            cu::trace!("no '{key}' section, skipping path resolution");
+            continue;
+        };
+        cu::debug!("found '{key}' section, resolving paths");
+        resolve_dependency_paths_in_table(dependencies, base_path, workspace_deps)
+            .context("Failed to resolve dependency paths in '{dependencies}'")?;
     }
-    log::trace!("finished resolving dependency paths");
+    cu::trace!("finished resolving dependency paths");
     Ok(())
 }
 
@@ -365,14 +353,14 @@ fn resolve_dependency_paths_in_table(
     table: &mut toml::Value,
     base_path: &Path,
     workspace_deps: Option<&toml::Table>,
-) -> anyhow::Result<()> {
+) -> cu::Result<()> {
     let Some(table) = table.as_table_mut() else {
-        log::trace!("not a table, skipping path resolution");
+        cu::trace!("not a table, skipping path resolution");
         return Ok(());
     };
     for (dep_name, dep_value) in table {
         let Some(dep_table) = dep_value.as_table_mut() else {
-            log::trace!("dependency '{dep_name}' is not a table, skipping path resolution");
+            cu::trace!("dependency '{dep_name}' is not a table, skipping path resolution");
             continue;
         };
         let is_workspace = dep_table
@@ -380,13 +368,13 @@ fn resolve_dependency_paths_in_table(
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         if is_workspace {
-            log::debug!("dependency '{dep_name}' has workspace = true, resolving workspace path");
+            cu::debug!("dependency '{dep_name}' has workspace = true, resolving workspace path");
             match &workspace_deps {
                 Some(workspace_deps) => {
                     resolve_dependency_workspace(dep_name, dep_value, workspace_deps);
                 }
                 None => {
-                    log::debug!(
+                    cu::debug!(
                         "dependency '{dep_name}' has workspace = true but no workspace dependencies provided, skipping path resolution"
                     );
                 }
@@ -397,31 +385,31 @@ fn resolve_dependency_paths_in_table(
             resolve_dependency_path(dep_name, path_value, base_path);
         }
     }
-    log::trace!("finished resolving dependency paths in dependency table");
+    cu::trace!("finished resolving dependency paths in dependency table");
     Ok(())
 }
 
 fn resolve_dependency_path(name: &str, value: &mut toml::Value, base_path: &Path) {
     let Some(path_str) = value.as_str() else {
-        log::trace!("dependency '{name}' 'path' is not a string, skipping path resolution");
+        cu::trace!("dependency '{name}' 'path' is not a string, skipping path resolution");
         return;
     };
-    log::debug!("resolving path for dependency: {name}, path: {path_str}");
+    cu::debug!("resolving path for dependency: {name}, path: {path_str}");
     match util::resolve_path(path_str, base_path) {
         Ok(resolved_path) => {
-            log::debug!("resolved path for dependency '{name}': {resolved_path}");
+            cu::debug!("resolved path for dependency '{name}': {resolved_path}");
             *value = resolved_path.into();
         }
         Err(e) => {
-            log::error!("failed to resolve path for dependency '{name}': {e}, ignoring this path");
+            cu::error!("failed to resolve path for dependency '{name}': {e}, ignoring this path");
         }
     }
 }
 
 fn resolve_dependency_workspace(name: &str, value: &mut toml::Value, workspace_deps: &toml::Table) {
-    log::debug!("resolving workspace path for dependency: {name}");
+    cu::debug!("resolving workspace path for dependency: {name}");
     let Some(dep) = workspace_deps.get(name) else {
-        log::trace!(
+        cu::trace!(
             "dependency '{name}' not found in workspace dependencies, skipping path resolution"
         );
         return;
@@ -432,11 +420,11 @@ fn resolve_dependency_workspace(name: &str, value: &mut toml::Value, workspace_d
 pub fn make_test_package_manifest(
     manifest_info: &CargoManifestInfo,
     test_package_name: &str,
-) -> anyhow::Result<String> {
-    log::debug!("preparing test package manifest");
+) -> cu::Result<String> {
+    cu::debug!("preparing test package manifest");
     let package_name = &manifest_info.package_name;
 
-    let mut test_package_manifest = toml::toml! {
+    let mut test_package_manifest = toml! {
         [package]
         name = ""
         version = "0.0.0"
@@ -467,7 +455,7 @@ pub fn make_test_package_manifest(
     // add the main package as a dependency to the test package
     let mut main_package_dep = {
         let package_name = package_name.to_string();
-        toml::toml! {
+        toml! {
             path = ""
             package = package_name
             default-features = false
@@ -499,7 +487,7 @@ pub fn make_test_package_manifest(
             .insert(fname.clone(), toml::Value::Array(feature_value));
     }
 
-    let test_package_manifest = toml::to_string(&test_package_manifest)
+    let test_package_manifest = toml::stringify(&test_package_manifest)
         .context("failed to serialize test package Cargo.toml")?;
 
     Ok(test_package_manifest)

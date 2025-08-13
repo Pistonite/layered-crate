@@ -10,14 +10,13 @@ cargo binstall layered-crate
 # or build the tool from source
 cargo install layered-crate
 
-# check internal dependencies amongst layers
+# check internal dependencies amongst layers, unused dependencies
+# are automatically denied
 layered-crate
 
-# deny unused dependencies
-RUSTFLAGS=-Dunused-imports layered-crate 
-
-CARGO=/my-cargo layered-crate -- +nightly check --lib --color=always --features ... 
-#     ^ change the cargo binary  ^ customize args passed to cargo
+CARGO_BIN=/my-cargo layered-crate -- +nightly check --lib --features ... 
+# ^ change the cargo binary with env
+#                                    ^ pass extra args to cargo after --
 ```
 
 ## The Problem
@@ -33,14 +32,14 @@ for something on crates.io. There are several upsides and downsides to this. Jus
 - Upsides:
   - Uses the standard `Cargo.toml`, which is more stable
   - Might be better to split large code base, so someone doesn't have to download everything
-  - Might be better for incremental build but I am clueless if this is true
+  - Might be better for incremental build, but I am clueless if this is true
 
 - Downsides:
   - Need to publish 50 instead of 1 crate
   - Need to have a more complicated `Cargo.toml` setup
   - Cannot have `pub(crate)` visibility or `impl` for types from dependencies
   - Might be worse for optimization since one of the factor for inlining is if
-    the inlining is across a crate boundary. However I have no clue what degree of effect this has
+    the inlining is across a crate boundary. However, I have no clue what degree of effect this has
 
 This tool uses a `Layerfile.toml` to specify the internal dependencies, and
 automatically checks that the dependencies are respected in the code as
@@ -90,10 +89,10 @@ impl = [] # any layer specified here will be checked together, see below for mor
 
 Now, simply run `layered-crate` to check for violations - you will get an error if anything in `layer2` imports from `layer1`!
 
-To detect and deny unused layers specified in `depends-on`, you can use the `RUSTFLAGS` environment variable
-to pass custom compiler flags to cargo
+By default, unused layers specified in `depends-on` will automatically be denied by 
+setting `RUSTFLAGS=-Dunused-imports`. you can use the `--no-rust-flags` option to prevent this tool from touching `RUSTFLAGS`.
 ```bash
-RUSTFLAGS=-Dunused-imports layered-crate
+layered-crate --no-rust-flags
 ```
 
 During the layer checking, the layer and its dependencies are split

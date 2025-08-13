@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::path::Path;
+use std::sync::LazyLock;
 
-use anyhow::{Context, bail};
+use cu::pre::*;
+use regex::Regex;
 
 use crate::layerfile::{DepGraph, LayerFile};
 use crate::syntax::EntryFile;
@@ -15,21 +16,13 @@ pub fn build_by_layers(
     layerfile: &LayerFile,
     dep_graph: &DepGraph,
     entryfile: &EntryFile,
-) -> anyhow::Result<()> {
-    let cargo = cargo_bin();
-
+) -> cu::Result<()> {
     // first run cargo once on the initial state
-    message("building package...");
-    let status = run_cargo_inherit(&cargo, &args.cargo_args, package_dir)
-        .context("failed to call cargo to build full package")?;
-    if !status.success() {
-        error_message("initial build failed, please see errors above from cargo.");
-        bail!("failed to build full package in (mostly) original form");
-    }
+    run_cargo(None, &args.cargo_args, package_dir)?;
 
     // find extra modules that will always be included
     let mut extra_modules = entryfile.all_modules();
-    log::debug!("all modules: {:?}", extra_modules);
+    cu::debug!("all modules: {:?}", extra_modules);
     // if a module is in the dep graph, then it's not "extra"
     for module in &dep_graph.top_down_order {
         extra_modules.remove(module);
@@ -38,12 +31,11 @@ pub fn build_by_layers(
     for module in &layerfile.crate_.exclude {
         extra_modules.remove(module);
     }
-    log::debug!("extra modules: {:?}", extra_modules);
+    cu::debug!("extra modules: {:?}", extra_modules);
 
     let test_package_entrypoint = test_package_dir.join("lib.rs");
 
     // now we check each layer
-    message("checking layers...");
     for layer in &dep_graph.top_down_order {
         let all_test_modules = layerfile
             .get_test_modules(layer)
@@ -65,83 +57,96 @@ pub fn build_by_layers(
         let test_file = entryfile
             .produce_test_lib(&all_test_modules, &all_deps)
             .with_context(|| format!("failed to produce test library for module '{layer}'"))?;
-        std::fs::write(&test_package_entrypoint, test_file)
+        cu::fs::write(&test_package_entrypoint, test_file)
             .context("failed to write test library to file")?;
         util::format_if_possible(&test_package_entrypoint);
-        let (status, stderr) = run_cargo_capture(&cargo, &args.cargo_args, test_package_dir)
-            .with_context(|| format!("failed to run cargo for testing module: '{layer}'"))?;
-        if !status.success() {
-            println!("{}", stderr);
-            error_message(format!("FAIL {layer}"));
-            bail!(
-                "layer `{layer}` failed to build - check if there are missing dependencies or unused dependencies"
-            );
-        }
-        message(format!("PASS {layer}"));
+        run_cargo(Some(layer), &args.cargo_args, test_package_dir)?;
     }
 
     Ok(())
 }
 
-fn run_cargo_inherit(cargo: &Path, args: &[String], curdir: &Path) -> anyhow::Result<ExitStatus> {
-    log::debug!("running cargo with args: {:?}", args);
-    let mut child = Command::new(cargo)
-        .args(args)
-        .current_dir(curdir)
-        .spawn()
-        .context("failed to spawn cargo process")?;
-    let status = child.wait().context("failed to wait for cargo process")?;
-    log::debug!("cargo process finished with status: {}", status);
-    Ok(status)
-}
-
-fn run_cargo_capture(
-    cargo: &Path,
-    args: &[String],
-    curdir: &Path,
-) -> anyhow::Result<(ExitStatus, String)> {
-    log::debug!("running cargo with args: {:?}", args);
-    let output = Command::new(cargo)
-        .args(args)
-        .current_dir(curdir)
-        .output()
-        .context("failed to run cargo command")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if output.status.success() {
-        log::debug!("cargo command succeeded");
-        log::trace!("cargo stdout: {}", stdout);
-        log::trace!("cargo stderr: {}", stderr);
-        Ok((output.status, stderr))
-    } else {
-        log::error!("cargo command failed with status: {}", output.status);
-        log::trace!("cargo stdout: {}", stdout);
-        Ok((output.status, stderr))
-    }
-}
-
-fn cargo_bin() -> PathBuf {
-    // https://doc.rust-lang.org/cargo/reference/environment-variables.html
-    // (if we make this into a 3rd party subcommand)
-    if let Ok(x) = std::env::var("CARGO_BIN") {
-        if !x.is_empty() {
-            log::debug!("using CARGO environment variable: {x}");
-            return x.into();
+fn run_cargo(layer: Option<&str>, args: &[String], curdir: &Path) -> cu::Result<()> {
+    let mut has_warning = false;
+    let result = {
+        let bar = match layer {
+            Some(layer) => cu::progress_unbounded_lowp(format!("compiling layer: {layer}")),
+            None => cu::progress_unbounded("initial cargo build"),
+        };
+        let (child, _, output) = cu::which("cargo")?
+            .command()
+            .args(args)
+            .current_dir(curdir)
+            .stdio_null()
+            .stderr(cu::pio::lines())
+            .spawn()?;
+        static STATUS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new("^((\x1b[^m]*m)|\\s)*(Compiling|Checking|Finished)((\x1b[^m]*m)|\\s)*")
+                .unwrap()
+        });
+        static WARNING_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new("^((\x1b[^m]*m)|\\s)*warning").unwrap());
+        static ERROR_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new("^((\x1b[^m]*m)|\\s)*error").unwrap());
+        // prettify the output
+        let mut last_error_line = String::new();
+        for line in output {
+            let Ok(line) = line else {
+                continue;
+            };
+            if let Some(m) = STATUS_REGEX.find(&line) {
+                let line = &line[m.end()..];
+                cu::progress!(&bar, (), "{line}");
+                continue;
+            }
+            if WARNING_REGEX.find(&line).is_some() {
+                cu::warn!("{line}");
+                has_warning = true;
+                continue;
+            }
+            cu::print!("{line}");
+            if layer.is_some() && line.contains("__layer_test") {
+                print_guessed_hint_for_error(&line, &last_error_line);
+            }
+            if ERROR_REGEX.find(&line).is_some() {
+                last_error_line = line;
+            }
+        }
+        child.wait_nz()
+    };
+    match result {
+        Ok(()) => {
+            if has_warning {
+                match layer {
+                    Some(layer) => cu::warn!("PASS (with warning) {layer}"),
+                    None => cu::warn!("initial build finished with warning(s)."),
+                }
+            } else {
+                if let Some(layer) = layer {
+                    cu::info!("PASS {layer}");
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if let Some(layer) = layer {
+                cu::error!("FAIL {layer}");
+                cu::rethrow!(e, "layer {layer} failed to build (see cargo output above)");
+            }
+            cu::rethrow!(e, "crate failed to build (see cargo output above)");
         }
     }
-    log::trace!("CARGO envvar not set or empty, using PATH to find cargo");
-    if let Ok(x) = which::which("cargo") {
-        log::debug!("found cargo in PATH: {}", x.display());
-        return x;
-    }
-    log::warn!("can't find cargo, just using `cargo` command");
-    "cargo".into()
 }
 
-pub fn message(message: impl std::fmt::Display) {
-    println!("\x1b[1;32m[layered-crate]\x1b[0m {message}");
-}
-pub fn error_message(message: impl std::fmt::Display) {
-    println!("\x1b[1;31m[layered-crate]\x1b[0m {message}");
+/// print a best-guess hint (if any) for an error line that matches
+fn print_guessed_hint_for_error(line: &str, last_error: &str) {
+    if line.contains("unused import") {
+        cu::hint!("(you might have specified an extraneous dependency on this layer)");
+        return;
+    }
+    if last_error.contains("unused import") {
+        // printed by the if above
+        return;
+    }
+    cu::hint!("(you might be missing a dependency on this layer)");
 }

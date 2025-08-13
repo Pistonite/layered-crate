@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use anyhow::Context;
-use proc_macro2::Span;
-use quote::{ToTokens, quote};
+use cu::pre::*;
+use pm::pre::*;
 
 use crate::util;
 
@@ -16,8 +15,8 @@ pub struct EntryFile {
 }
 
 impl EntryFile {
-    pub fn resolve(content: &str, base_path: &Path) -> anyhow::Result<Self> {
-        log::debug!("parsing entry file content");
+    pub fn resolve(content: &str, base_path: &Path) -> cu::Result<Self> {
+        cu::debug!("parsing entry file content");
 
         let mut syntax = syn::parse_file(content)
             .context("failed to parse entrypoint for the library - you have syntax errors.")?;
@@ -31,7 +30,7 @@ impl EntryFile {
         )
         .context("failed to resolve items in the entrypoint file")?;
 
-        log::debug!("entry file resolved successfully");
+        cu::debug!("entry file resolved successfully");
         Ok(Self {
             syntax,
             top_module_to_paths: resolve_map,
@@ -58,8 +57,8 @@ impl EntryFile {
         &self,
         test_modules: &[String],
         dependencies: &BTreeSet<String>,
-    ) -> anyhow::Result<String> {
-        log::debug!(
+    ) -> cu::Result<String> {
+        cu::debug!(
             "producing test library with test modules: {test_modules:?}, dependencies: {dependencies:?}"
         );
 
@@ -86,17 +85,17 @@ impl EntryFile {
 
         let test_module_idents = test_modules
             .iter()
-            .map(|test_module| syn::Ident::new(test_module, Span::call_site()))
+            .map(|test_module| syn::Ident::new(test_module, Span2::call_site()))
             .collect::<Vec<_>>();
 
         let dep_idents = dependencies
             .iter()
-            .map(|dep| syn::Ident::new(dep, Span::call_site()))
+            .map(|dep| syn::Ident::new(dep, Span2::call_site()))
             .collect::<Vec<_>>();
 
         // use rustfmt::skip to avoid formatting the original source code
         // unfortunately that also skips formatting this node in the test file
-        let test_file = quote! {
+        let test_file = pm::quote! {
             #(#file_attrs)*
             #(#extern_crates)*
 
@@ -119,8 +118,8 @@ fn resolve_items(
     base_path: &Path,
     resolve_path_attrs: bool,
     resolve_map: &mut BTreeMap<String, String>,
-) -> anyhow::Result<()> {
-    log::debug!(
+) -> cu::Result<()> {
+    cu::debug!(
         "resolving items in {tag}, base path: {}",
         base_path.display()
     );
@@ -135,7 +134,7 @@ fn resolve_items(
         });
         // modules must be publicly visible so the test package can access them
         if !matches!(item.vis, syn::Visibility::Public(_)) {
-            log::trace!("making module `{}` public", item.ident);
+            cu::trace!("making module `{}` public", item.ident);
             item.vis = syn::parse_quote! { pub };
         }
         // if the item already as a path attribute, resolve it to absolute path from base
@@ -144,7 +143,7 @@ fn resolve_items(
             .iter_mut()
             .find(|attr| attr.path().is_ident("path"))
         {
-            log::trace!("found path attribute for module: {}", item.ident);
+            cu::trace!("found path attribute for module: {}", item.ident);
             if resolve_path_attrs {
                 if let syn::Meta::NameValue(meta) = &mut path_attr.meta {
                     if let syn::Expr::Lit(expr) = &mut meta.value {
@@ -162,10 +161,10 @@ fn resolve_items(
             }
         } else {
             // otherwise, resolve the module path based on the module name
-            log::trace!("resolving module: {}", item.ident);
+            cu::trace!("resolving module: {}", item.ident);
             // is it an inline module? i.e. mod { ... }
             if let Some((_, child_items)) = &mut item.content {
-                log::trace!(
+                cu::trace!(
                     "module `{}` is inline, processing its items recursively",
                     item.ident
                 );
@@ -184,7 +183,7 @@ fn resolve_items(
                 "failed to resolve module `{}` in {tag}",
                 item.ident
             ))?;
-            log::trace!("adding path attribute to module `{}`: {}", item.ident, path);
+            cu::trace!("adding path attribute to module `{}`: {}", item.ident, path);
             item.attrs.push(syn::parse_quote! {
                 #[path = #path]
             });
@@ -192,16 +191,12 @@ fn resolve_items(
         }
     }
 
-    log::debug!("all items in {tag} resolved successfully");
+    cu::debug!("all items in {tag} resolved successfully");
     Ok(())
 }
 
-fn resolve_module(
-    tag: &str,
-    module_ident: &syn::Ident,
-    base_path: &Path,
-) -> anyhow::Result<String> {
-    log::trace!(
+fn resolve_module(tag: &str, module_ident: &syn::Ident, base_path: &Path) -> cu::Result<String> {
+    cu::trace!(
         "resolving module `{}` in {tag}, base path: {}",
         module_ident,
         base_path.display()
@@ -211,13 +206,13 @@ fn resolve_module(
 
     // <base_path>/module_ident.rs
     if let Ok(module_path) = util::resolve_path(format!("{module_name}.rs"), base_path) {
-        log::trace!("found module file at {module_path}");
+        cu::trace!("found module file at {module_path}");
         return Ok(module_path);
     }
 
     // <base_path>/module_ident/mod.rs
     let module_path = util::resolve_path(format!("{module_name}/mod.rs"), base_path)
         .context(format!("failed to resolve module `{module_name}` in {tag}"))?;
-    log::trace!("found module file at {module_path}");
+    cu::trace!("found module file at {module_path}");
     Ok(module_path)
 }

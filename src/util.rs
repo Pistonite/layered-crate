@@ -1,34 +1,44 @@
 use std::path::Path;
-use std::process::Command;
 
-use anyhow::bail;
+use cu::pre::*;
 
-pub fn resolve_path(path: impl AsRef<Path>, base_path: &Path) -> anyhow::Result<String> {
-    let full_path = base_path.join(path);
-    match dunce::canonicalize(&full_path) {
-        Ok(path) => Ok(path.to_string_lossy().to_string()),
+/// Resolve the path from a base path. Returns the absolute path as a string.
+/// Errors if the path is not UTF-8
+pub fn resolve_path(path: impl AsRef<Path>, base_path: &Path) -> cu::Result<String> {
+    base_path.join(path).normalize_exists()?.into_utf8()
+}
+
+/// Format the file with rustfmt if possible
+pub fn format_if_possible(path: &Path) {
+    let Some(rustfmt) = cu::bin::get("rustfmt") else {
+        return;
+    };
+    cu::debug!("formatting '{}'", path.display());
+    match rustfmt.command().arg(path).all_null().wait() {
+        Ok(code) if code.success() => {
+            cu::debug!("formatted '{}' successfully", path.display());
+        }
+        Ok(_) => {
+            cu::warn!("rustfmt failed for '{}'", path.display(),);
+        }
         Err(e) => {
-            bail!("failed to resolve path '{}': {e}", full_path.display());
+            cu::warn!("failed to run rustfmt on '{}': {e}", path.display());
         }
     }
 }
 
-pub fn format_if_possible(path: &Path) {
-    log::debug!("formatting file: {}", path.display());
-    let Ok(rustfmt) = which::which("rustfmt") else {
-        log::debug!("rustfmt not found, skipping formatting");
-        return;
-    };
-    match Command::new(rustfmt).arg(path).output() {
-        Ok(output) => {
-            if !output.status.success() {
-                log::warn!("rustfmt failed on {}", path.display(),);
-            } else {
-                log::debug!("formatted {} successfully", path.display());
-            }
+/// The generated package name for building the crate by layers
+pub fn test_package_name(name: &str) -> String {
+    format!("{name}-layer-test-{}", name.len())
+}
+
+pub fn add_rustflag_if_missing(flag: &str, rust_flags: &mut String) {
+    // currently we only do basic check
+    // so -D unused-imports won't get detected, for example
+    if !rust_flags.contains(flag) {
+        if !rust_flags.is_empty() {
+            rust_flags.push(' ');
         }
-        Err(_) => {
-            log::warn!("failed to run rustfmt on {}", path.display());
-        }
+        rust_flags.push_str(flag)
     }
 }
