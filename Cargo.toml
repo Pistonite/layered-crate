@@ -1,6 +1,6 @@
 [package]
 name = "layered-crate"
-version = "0.3.5"
+version = "0.4.0"
 edition = "2024"
 description = "Tool to declare and verify internal dependencies amongst modules inside a crate"
 repository = "https://github.com/Pistonite/layered-crate"
@@ -15,20 +15,21 @@ exclude = [
     "Taskfile.yml"
 ]
 
+[dependencies.cu]
+package = "pistonite-cu"
+version = "0.3.2"
+features = ["cli", "process", "toml"]
+
+[dependencies.pm]
+package = "pistonite-pm"
+version = "0.1.1"
+default-features = false
+features = ["full"]
+
 [dependencies]
-anyhow = "1.0.98"
-clap = { version = "4.5.40", features = ["derive"] }
-dunce = "1.0.5"
-env_logger = "0.11.8"
-log = "0.4.27"
-proc-macro2 = "1.0.95"
-quote = "1.0.40"
-serde = { version = "1.0.219", features = ["derive"] }
-syn = { version = "2.0.104", features = ["full"] }
-toml = "0.8.23"
-which = "8.0.0"
+regex = "1.11.1"
+serde = "1"
 
 [package.metadata.binstall.signing]
 algorithm = "minisign"
 pubkey = "RWThJQKJaXayoZBe0YV5LV4KFkQwcqQ6Fg9dJBz18JnpHGdf/cHUyKs+"
-
