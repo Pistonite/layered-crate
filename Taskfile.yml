@@ -21,8 +21,7 @@ tasks:
 
   install:
     cmds:
-      - rm -rf mono-dev
-      - git clone https://github.com/Pistonight/mono-dev --depth 1
+      - task: common:setup-mono-dev-at-root
 
   check:
     cmds:
