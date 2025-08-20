@@ -108,7 +108,7 @@ pub fn prepare(manifest_path: &Path) -> cu::Result<CargoManifestInfo> {
         cu::hint!(
             "if the lib entry point path is absolute, the generated Cargo.toml needs to be modified as well."
         );
-        cu::bail!("lib entry point path is absolute");
+        cu::bailfyi!("lib entry point path is absolute");
     }
 
     cu::debug!("checking if we are in a workspace");
