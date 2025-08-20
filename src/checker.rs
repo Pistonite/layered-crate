@@ -110,7 +110,10 @@ fn run_cargo(layer: Option<&str>, args: &[String], curdir: &Path) -> cu::Result<
             if let Some(layer) = layer {
                 cu::error!("FAIL {layer}");
                 cu::disable_trace_hint();
-                cu::rethrow!(e, "layer '{layer}' failed to build (see cargo output above)");
+                cu::rethrow!(
+                    e,
+                    "layer '{layer}' failed to build (see cargo output above)"
+                );
             }
             cu::disable_trace_hint();
             cu::rethrow!(e, "crate failed to build (see cargo output above)");
