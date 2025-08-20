@@ -45,7 +45,7 @@ impl LayerFile {
             to_add.clear();
             for m in &output {
                 let Some(layer) = self.layer.get(m) else {
-                    cu::bail!("layer `{m}` not found, this is a bug");
+                    cu::bail!("unexpected: layer `{m}` not found, this is a bug");
                 };
                 for dep in &layer.impl_ {
                     to_add.push(dep);
@@ -143,7 +143,7 @@ fn check_circular_dependencies_recur<'a>(
         return Ok(());
     }
     let Some(edges) = deps.get(curr) else {
-        cu::bail!(
+        cu::bailfyi!(
             "module `{curr}` not found in dependency graph, stack: {}. (You need to declare [layer.{curr}] even if it has no dependencies",
             format_stack_with_no_next(stack)
         );
@@ -152,12 +152,12 @@ fn check_circular_dependencies_recur<'a>(
     for edge in *edges {
         if stack.iter().any(|&s| s == edge) {
             let graph = format_stack(stack, edge);
-            cu::bail!("circular dependency detected: {graph}");
+            cu::bailfyi!("circular dependency detected: {graph}");
         }
         stack.push(edge);
         check_circular_dependencies_recur(deps, edge, stack, checked)?;
         if stack.pop().is_none() {
-            cu::bail!("underflowed dep stack, this is a bug");
+            cu::bail!("unexpected: underflowed dep stack, this is a bug");
         }
     }
 

@@ -1,9 +1,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::LazyLock;
+use std::sync::Arc;
 
 use cu::pre::*;
-use regex::Regex;
 
 use crate::layerfile::{DepGraph, LayerFile};
 use crate::syntax::EntryFile;
@@ -39,7 +38,7 @@ pub fn build_by_layers(
     for layer in &dep_graph.top_down_order {
         let all_test_modules = layerfile
             .get_test_modules(layer)
-            .with_context(|| format!("failed to get test modules for layer `{layer}`"))?;
+            .with_context(|| format!("failed to get test modules for layer '{layer}'"))?;
 
         let mut all_deps = BTreeSet::new();
         // collect all dependencies of the layer
@@ -67,86 +66,68 @@ pub fn build_by_layers(
 }
 
 fn run_cargo(layer: Option<&str>, args: &[String], curdir: &Path) -> cu::Result<()> {
-    let mut has_warning = false;
-    let result = {
-        let bar = match layer {
-            Some(layer) => cu::progress_unbounded_lowp(format!("compiling layer: {layer}")),
-            None => cu::progress_unbounded("initial cargo build"),
-        };
-        let (child, _, output) = cu::which("cargo")?
-            .command()
-            .args(args)
-            .current_dir(curdir)
-            .stdio_null()
-            .stderr(cu::pio::lines())
-            .spawn()?;
-        static STATUS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new("^((\x1b[^m]*m)|\\s)*(Compiling|Checking|Finished)((\x1b[^m]*m)|\\s)*")
-                .unwrap()
-        });
-        static WARNING_REGEX: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new("^((\x1b[^m]*m)|\\s)*warning").unwrap());
-        static ERROR_REGEX: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new("^((\x1b[^m]*m)|\\s)*error").unwrap());
-        // prettify the output
-        let mut last_error_line = String::new();
-        for line in output {
-            let Ok(line) = line else {
-                continue;
-            };
-            if let Some(m) = STATUS_REGEX.find(&line) {
-                let line = &line[m.end()..];
-                cu::progress!(&bar, (), "{line}");
-                continue;
+    let has_warning = Arc::new(cu::Atomic::<bool, bool>::new_bool(false));
+    let command = cu::which("cargo")?.command().args(args).current_dir(curdir);
+    let print_diag = {
+        let has_warning = Arc::clone(&has_warning);
+        move |is_warning: bool, message: &str| {
+            has_warning.set(true);
+            if is_warning {
+                cu::warn!("{message}");
+                return;
             }
-            if WARNING_REGEX.find(&line).is_some() {
-                cu::warn!("{line}");
-                has_warning = true;
-                continue;
-            }
-            cu::print!("{line}");
-            if layer.is_some() && line.contains("__layer_test") {
-                print_guessed_hint_for_error(&line, &last_error_line);
-            }
-            if ERROR_REGEX.find(&line).is_some() {
-                last_error_line = line;
-            }
+            cu::error!("{message}");
+            print_guessed_hint_for_error(message);
         }
-        child.wait_nz()
     };
-    match result {
+    let command = command.preset(cu::pio::cargo().on_diagnostic(print_diag));
+    let command = match layer {
+        Some(layer) => command.name(format!("building layer '{layer}'")),
+        None => command.name("build full crate"),
+    };
+    let (child, bar, _) = command.spawn()?;
+    match child.wait_nz() {
         Ok(()) => {
-            if has_warning {
-                match layer {
-                    Some(layer) => cu::warn!("PASS (with warning) {layer}"),
-                    None => cu::warn!("initial build finished with warning(s)."),
+            match layer {
+                Some(layer) => {
+                    if let Some(bar) = bar {
+                        cu::progress_done!(&bar, "PASS {layer}");
+                    }
+                    if has_warning.get() {
+                        cu::warn!("layer '{layer}' passed with warning(s).");
+                    }
                 }
-            } else {
-                if let Some(layer) = layer {
-                    cu::info!("PASS {layer}");
+                None => {
+                    if has_warning.get() {
+                        cu::warn!("initial build finished with warning(s).");
+                    }
                 }
             }
             Ok(())
         }
         Err(e) => {
+            drop(bar);
             if let Some(layer) = layer {
                 cu::error!("FAIL {layer}");
-                cu::rethrow!(e, "layer {layer} failed to build (see cargo output above)");
+                cu::disable_trace_hint();
+                cu::rethrow!(
+                    e,
+                    "layer '{layer}' failed to build (see cargo output above)"
+                );
             }
+            cu::disable_trace_hint();
             cu::rethrow!(e, "crate failed to build (see cargo output above)");
         }
     }
 }
 
 /// print a best-guess hint (if any) for an error line that matches
-fn print_guessed_hint_for_error(line: &str, last_error: &str) {
-    if line.contains("unused import") {
+fn print_guessed_hint_for_error(error: &str) {
+    if error.contains("unused import") {
         cu::hint!("(you might have specified an extraneous dependency on this layer)");
         return;
     }
-    if last_error.contains("unused import") {
-        // printed by the if above
-        return;
+    if error.contains("unresolved import") {
+        cu::hint!("(you might be missing a dependency on this layer)");
     }
-    cu::hint!("(you might be missing a dependency on this layer)");
 }
