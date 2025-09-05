@@ -12,16 +12,10 @@ includes:
     internal: true
 
 tasks:
-  install-cargo-extra-tools:
-    aliases: [icets]
-    cmds:
-      - task: common:cargo-binstall
-        vars:
-          PACKAGES: cargo-watch live-server
-
   install:
     cmds:
-      - task: common:setup-mono-dev-at-root
+      - rm -rf mono-dev
+      - git clone https://github.com/Pistonight/mono-dev --depth 1
 
   check:
     cmds:
@@ -31,7 +25,3 @@ tasks:
   fix:
     cmds:
       - task: cargo:fmt-fix
-
-  dev-doc:
-    cmds:
-      - task: cargo:watch-serve-doc

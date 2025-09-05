@@ -8,25 +8,6 @@ pub fn resolve_path(path: impl AsRef<Path>, base_path: &Path) -> cu::Result<Stri
     base_path.join(path).normalize_exists()?.into_utf8()
 }
 
-/// Format the file with rustfmt if possible
-pub fn format_if_possible(path: &Path) {
-    let Some(rustfmt) = cu::bin::get("rustfmt") else {
-        return;
-    };
-    cu::debug!("formatting '{}'", path.display());
-    match rustfmt.command().arg(path).all_null().wait() {
-        Ok(code) if code.success() => {
-            cu::debug!("formatted '{}' successfully", path.display());
-        }
-        Ok(_) => {
-            cu::warn!("rustfmt failed for '{}'", path.display(),);
-        }
-        Err(e) => {
-            cu::warn!("failed to run rustfmt on '{}': {e}", path.display());
-        }
-    }
-}
-
 /// The generated package name for building the crate by layers
 pub fn test_package_name(name: &str) -> String {
     format!("{name}-layer-test-{}", name.len())

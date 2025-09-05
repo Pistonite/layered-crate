@@ -371,7 +371,7 @@ fn resolve_dependency_paths_in_table(
             cu::debug!("dependency '{dep_name}' has workspace = true, resolving workspace path");
             match &workspace_deps {
                 Some(workspace_deps) => {
-                    resolve_dependency_workspace(dep_name, dep_value, workspace_deps);
+                    resolve_dependency_workspace(dep_name, dep_table, workspace_deps);
                 }
                 None => {
                     cu::debug!(
@@ -406,7 +406,8 @@ fn resolve_dependency_path(name: &str, value: &mut toml::Value, base_path: &Path
     }
 }
 
-fn resolve_dependency_workspace(name: &str, value: &mut toml::Value, workspace_deps: &toml::Table) {
+fn resolve_dependency_workspace(name: &str, value: &mut toml::Table, workspace_deps: &toml::Table) {
+    value.remove("workspace");
     cu::debug!("resolving workspace path for dependency: {name}");
     let Some(dep) = workspace_deps.get(name) else {
         cu::trace!(
@@ -414,7 +415,39 @@ fn resolve_dependency_workspace(name: &str, value: &mut toml::Value, workspace_d
         );
         return;
     };
-    *value = dep.clone();
+    let is_optional = value
+        .get("optional")
+        .and_then(|x| x.as_bool())
+        .unwrap_or_default();
+    let additional_features = match value.get_mut("features").and_then(|x| x.as_array_mut()) {
+        None => vec![],
+        Some(x) => std::mem::take(x),
+    };
+    *value = match dep.as_table() {
+        None => {
+            // version number
+            let mut map = toml::Table::new();
+            map.insert("version".to_string(), dep.clone());
+            map
+        }
+        Some(map) => map.clone(),
+    };
+    value.insert("optional".to_string(), is_optional.into());
+    match value.get_mut("features").and_then(|x| x.as_array_mut()) {
+        Some(features) => {
+            for f in additional_features {
+                if features.contains(&f) {
+                    continue;
+                }
+                features.push(f);
+            }
+        }
+        None => {
+            if !additional_features.is_empty() {
+                value.insert("features".to_string(), additional_features.into());
+            }
+        }
+    };
 }
 
 pub fn make_test_package_manifest(
