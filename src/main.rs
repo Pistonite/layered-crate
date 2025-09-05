@@ -68,12 +68,12 @@ fn main(mut args: Cli) -> cu::Result<()> {
         unsafe { std::env::set_var("RUSTFLAGS", rust_flags) };
     }
 
-    let _ = cu::which("rustfmt");
     cu::bin::find(
         "cargo",
         [
             // https://doc.rust-lang.org/cargo/reference/environment-variables.html
             // (if we make this into a 3rd party subcommand)
+            cu::bin::from_env("CARGO"),
             cu::bin::from_env("CARGO_BIN"),
             cu::bin::in_PATH(),
         ],
@@ -112,6 +112,7 @@ fn main(mut args: Cli) -> cu::Result<()> {
 
     checker::build_by_layers(
         &args,
+        manifest_path,
         &package_dir,
         &test_package_dir,
         &layerfile,
@@ -140,6 +141,17 @@ fn prepare_workspace(
     let test_package_name = util::test_package_name(&manifest_info.package_name);
     let test_package_dir = path.join(&test_package_name);
     cu::fs::make_dir(&test_package_dir).context("failed to create test package directory")?;
+
+    let build_script = Path::new("./build.rs");
+    if build_script.exists() && !build_script.is_dir() {
+        cu::debug!("found build script, copying build script to generated packages");
+        let package_build_script = package_dir.join("build.rs");
+        cu::fs::copy(build_script, package_build_script)
+            .context("failed to copy build script to temporary package")?;
+        let test_package_build_script = test_package_dir.join("build.rs");
+        cu::fs::copy(build_script, test_package_build_script)
+            .context("failed to copy build script to test package")?;
+    }
 
     cu::debug!("writing Cargo.toml to package directory");
     let cargo_toml_path = package_dir.join("Cargo.toml");
@@ -224,7 +236,6 @@ fn prepare_workspace(
     );
     let lib_content = entryfile.produce_lib();
     cu::fs::write(&lib_entry_path, lib_content).context("failed to write lib entry point file")?;
-    util::format_if_possible(&lib_entry_path);
 
     cu::debug!("preparing test package");
 

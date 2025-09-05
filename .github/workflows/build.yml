@@ -28,8 +28,6 @@ jobs:
           - image: ubuntu-24.04-arm
             target: arm64
           - image: macos-latest
-            target: x64
-          - image: macos-latest
             target: arm64
           - image: windows-latest
             target: x64

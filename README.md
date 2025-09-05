@@ -14,9 +14,9 @@ cargo install layered-crate
 # are automatically denied
 layered-crate
 
-CARGO_BIN=/my-cargo layered-crate -- +nightly check --lib --features ... 
+CARGO=/my-cargo layered-crate -- +nightly check --lib --features ... 
 # ^ change the cargo binary with env
-#                                    ^ pass extra args to cargo after --
+#                                ^ pass extra args to cargo after --
 ```
 
 ## The Problem
@@ -124,6 +124,51 @@ Macro expansion can give some nasty errors - especially procedural macros.
 If your crate uses macros (including procedural macros), please read 
 [this issue on GitHub](https://github.com/Pistonite/layered-crate/issues/8#issuecomment-2923598649)
 before considering this tool.
+
+## Build Scripts
+If `build.rs` is found in the working directory (i.e. next to `Cargo.toml`),
+it will be copied to the generated test packages. The build script might need
+some modification to work when checking the layers.
+
+1. If the build script reads or writes files within the package's source tree
+   (usually implemented by using `CARGO_MANIFEST_DIR` or `CARGO_MANIFEST_PATH`
+   environment variable), they need to be changed using `LAYERED_CRATE_ORIGINAL_` prefixed
+   version to point to the original paths as if you are running the build script
+   in the original location. Note that the build script should still generate the source
+   code to the same location as usual, since the generated package will link to the original
+   package instead of copying all the source.
+   ```rust
+   // change this:
+   let manifest_dir = env!("CARGO_MANIFEST_DIR");
+   // to:
+   let manifest_dir = std::env::var("LAYERED_CRATE_ORIGINAL_MANIFEST_DIR")
+       .unwrap_or(env!("CARGO_MANIFEST_DIR").to_string());
+   ```
+2. If the build script needs to be adjusted depending on which layer(s) are being
+   built and which layer is being tested, you can use `LAYERED_CRATE_DEPS_LAYERS`
+   and `LAYERED_CRATE_TESTING_LAYER` environment variables.
+     - When building the full package initially (before testing any layer),
+       `LAYERED_CRATE_TESTING_LAYER` will be empty and `LAYERED_CRATE_DEPS_LAYERS`
+       will contain all layers.
+   ```rust
+   let testing_layer = std::env::var("LAYERED_CRATE_TESTING_LAYER").unwrap_or_default();
+   let deps_layers: Vec<_> = std::env::var("LAYERED_CRATE_DEPS_LAYERS")
+       .unwrap_or_default()
+       .split(',').collect();
+   let is_running_layered_crate = !testing_layer.is_empty() || !deps_layers.is_empty();
+   if is_running_layered_crate && deps_layers.contains("foo") {
+       // the dependencies of the current layer being tested contains the
+       // "foo" layer
+       build_for_foo_layer();
+   }
+   if testing_layer.as_str() == "foo" {
+       // the current layer being tested is "foo"
+   }
+   ```
+3. If the build script is agnostic of the location of the package, then
+   no change is needed. For example, if only generating files to `target`
+   directory and using paths relative to `target`. The target directory will be
+   the one for the test package, not the original package.
 
 ## Other Limitations
 Here are some more limitations of the tool other than the ones
