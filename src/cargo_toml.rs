@@ -407,7 +407,6 @@ fn resolve_dependency_path(name: &str, value: &mut toml::Value, base_path: &Path
 }
 
 fn resolve_dependency_workspace(name: &str, value: &mut toml::Table, workspace_deps: &toml::Table) {
-    value.remove("workspace");
     cu::debug!("resolving workspace path for dependency: {name}");
     let Some(dep) = workspace_deps.get(name) else {
         cu::trace!(
