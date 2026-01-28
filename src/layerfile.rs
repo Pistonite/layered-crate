@@ -143,7 +143,7 @@ fn check_circular_dependencies_recur<'a>(
         return Ok(());
     }
     let Some(edges) = deps.get(curr) else {
-        cu::bailfyi!(
+        cu::bail!(
             "module `{curr}` not found in dependency graph, stack: {}. (You need to declare [layer.{curr}] even if it has no dependencies",
             format_stack_with_no_next(stack)
         );
@@ -152,7 +152,7 @@ fn check_circular_dependencies_recur<'a>(
     for edge in *edges {
         if stack.iter().any(|&s| s == edge) {
             let graph = format_stack(stack, edge);
-            cu::bailfyi!("circular dependency detected: {graph}");
+            cu::bail!("circular dependency detected: {graph}");
         }
         stack.push(edge);
         check_circular_dependencies_recur(deps, edge, stack, checked)?;

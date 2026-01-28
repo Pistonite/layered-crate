@@ -193,3 +193,23 @@ mentioned above:
    
 2. We do not support modules produced by macros in the entry point, as we purely
    parse the entry point as syntax tree. Macros in other modules are fine.
+
+3. The artifacts from running this tool are separated from the artifacts
+   of building/checking your package normally with `cargo`. This means a CI pipeline
+   that runs both `cargo check`/`cargo clippy` and `layered-crate` have duplicated
+   checks and may incur additional cost. If this is an issue, consider:
+   - Adding the output directory of this tool to the cache of your pipeline.
+   - Use `layered-crate` instead of `cargo` to run those checks.
+     ```bash
+     # Replace:
+     cargo clippy -D warnings -D clippy::todo ... # rest of clippy flags
+     # With:
+     layered-crate -- clippy -D warnings -D clippy::todo ... # rest of clippy flags
+     ```
+     Since this tool does not copy your source files except for the entry point (`lib.rs`),
+     the diagnostic messages will still be accurate.
+   - Not using this tool and use multiple crates to organize your project.
+   - Use a global cache helper like `sccache`, which I have not used before,
+     so I am not sure if it works with `check` commands
+
+
