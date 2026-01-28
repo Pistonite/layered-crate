@@ -1,4 +1,5 @@
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
+use std::path::Path;
 
 use cu::pre::*;
 
@@ -108,7 +109,7 @@ pub fn prepare(manifest_path: &Path) -> cu::Result<CargoManifestInfo> {
         cu::hint!(
             "if the lib entry point path is absolute, the generated Cargo.toml needs to be modified as well."
         );
-        cu::bailfyi!("lib entry point path is absolute");
+        cu::bail!("lib entry point path is absolute");
     }
 
     cu::debug!("checking if we are in a workspace");
@@ -283,7 +284,7 @@ fn resolve_paths_in_workspace(
                 cu::trace!("resolving path for workspace member '{path_str}'");
                 let resolved_path = cu::check!(
                     util::resolve_path(path_str, base_path),
-                    error!("failed to resolve path for workspace member '{path_str}'")
+                    "failed to resolve path for workspace member '{path_str}'"
                 )?;
                 cu::debug!("resolved path for workspace member '{path_str}': {resolved_path}");
                 *m = resolved_path.into();

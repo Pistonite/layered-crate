@@ -112,19 +112,26 @@ fn run_cargo(
             print_guessed_hint_for_error(message);
         }
     };
-    let command = command.preset(cu::pio::cargo().on_diagnostic(print_diag));
-    let command = match layer {
-        Some(layer) => command.name(format!("building layer '{layer}'")),
-        None => command.name("build full crate"),
+    let name = match layer {
+        Some(layer) => format!("building layer '{layer}'"),
+        None => "build full crate".to_string(),
     };
-    let (child, bar, _) = command.spawn()?;
+    let done_message = match layer {
+        Some(layer) => format!("PASS {layer}"),
+        None => format!("{name}: OK"),
+    };
+    let command = command.preset(
+        cu::pio::cargo(name)
+            .on_diagnostic(print_diag)
+            .configure_spinner(|builder| builder.when_done(done_message)),
+    );
+    let (child, bar) = command.spawn()?;
     match child.wait_nz() {
         Ok(()) => {
             match layer {
                 Some(layer) => {
-                    if let Some(bar) = bar {
-                        cu::progress_done!(&bar, "PASS {layer}");
-                    }
+                    cu::progress!(bar, "PASS {layer}");
+                    bar.done();
                     if has_warning.get() {
                         cu::warn!("layer '{layer}' passed with warning(s).");
                     }
@@ -141,13 +148,11 @@ fn run_cargo(
             drop(bar);
             if let Some(layer) = layer {
                 cu::error!("FAIL {layer}");
-                cu::disable_trace_hint();
                 cu::rethrow!(
                     e,
                     "layer '{layer}' failed to build (see cargo output above)"
                 );
             }
-            cu::disable_trace_hint();
             cu::rethrow!(e, "crate failed to build (see cargo output above)");
         }
     }
