@@ -23,3 +23,25 @@ pub fn add_rustflag_if_missing(flag: &str, rust_flags: &mut String) {
         rust_flags.push_str(flag)
     }
 }
+
+pub fn run_rustfmt(input: String) -> String {
+    match run_rustfmt_internal(&input) {
+        Ok(x) => x,
+        Err(e) => {
+            cu::debug!("rustfmt failed: {e:?}");
+            input
+        }
+    }
+}
+fn run_rustfmt_internal(input: &str) -> cu::Result<String> {
+    let (child, output) = cu::which("rustfmt")?
+        .command()
+        .args(["--edition", "2024", "--emit", "stdout"])
+        .stdin(cu::pio::write(input.as_bytes().to_vec()))
+        .stdout(cu::pio::string())
+        .stderr_null()
+        .spawn()?;
+    child.wait_nz()?;
+    let output = output.join()??;
+    Ok(output)
+}

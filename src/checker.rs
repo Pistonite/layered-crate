@@ -47,9 +47,10 @@ pub fn build_by_layers(
 
     // now we check each layer
     for layer in &dep_graph.top_down_order {
-        let all_test_modules = layerfile
-            .get_test_modules(layer)
-            .with_context(|| format!("failed to get test modules for layer '{layer}'"))?;
+        let all_test_modules = cu::check!(
+            layerfile.get_test_modules(layer),
+            "failed to get test modules for layer '{layer}'"
+        )?;
 
         let mut all_deps = BTreeSet::new();
         // collect all dependencies of the layer
@@ -64,11 +65,14 @@ pub fn build_by_layers(
         }
 
         // build with all dependencies of the layer
-        let test_file = entryfile
-            .produce_test_lib(&all_test_modules, &all_deps)
-            .with_context(|| format!("failed to produce test library for module '{layer}'"))?;
-        cu::fs::write(&test_package_entrypoint, test_file)
-            .context("failed to write test library to file")?;
+        let test_file = cu::check!(
+            entryfile.produce_test_lib(&all_test_modules, &all_deps),
+            "failed to produce test library for module '{layer}'"
+        )?;
+        cu::check!(
+            cu::fs::write(&test_package_entrypoint, test_file),
+            "failed to write test library to file"
+        )?;
         let deps_str = all_deps.iter().join(",");
         run_cargo(
             Some(layer),

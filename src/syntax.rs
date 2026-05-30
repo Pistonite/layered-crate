@@ -18,17 +18,21 @@ impl EntryFile {
     pub fn resolve(content: &str, base_path: &Path) -> cu::Result<Self> {
         cu::debug!("parsing entry file content");
 
-        let mut syntax = syn::parse_file(content)
-            .context("failed to parse entrypoint for the library - you have syntax errors.")?;
+        let mut syntax = cu::check!(
+            syn::parse_file(content),
+            "failed to parse entrypoint for the library - there are syntax errors."
+        )?;
         let mut resolve_map = BTreeMap::new();
-        resolve_items(
-            "crate",
-            &mut syntax.items,
-            base_path,
-            true,
-            &mut resolve_map,
-        )
-        .context("failed to resolve items in the entrypoint file")?;
+        cu::check!(
+            resolve_items(
+                "crate",
+                &mut syntax.items,
+                base_path,
+                true,
+                &mut resolve_map,
+            ),
+            "failed to resolve items in the entrypoint file"
+        )?;
 
         cu::debug!("entry file resolved successfully");
         Ok(Self {
@@ -50,7 +54,7 @@ impl EntryFile {
 
     /// Produce the library source code as a string.
     pub fn produce_lib(&self) -> String {
-        self.syntax.to_token_stream().to_string()
+        util::run_rustfmt(self.syntax.to_token_stream().to_string())
     }
 
     pub fn produce_test_lib(
@@ -76,10 +80,11 @@ impl EntryFile {
         let test_module_paths = test_modules
             .iter()
             .map(|test_module| {
-                self.top_module_to_paths.get(test_module).context(format!(
+                cu::check!(
+                    self.top_module_to_paths.get(test_module),
                     "test module `{}` not found in entry file",
                     test_module
-                ))
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -93,21 +98,18 @@ impl EntryFile {
             .map(|dep| syn::Ident::new(dep, Span2::call_site()))
             .collect::<Vec<_>>();
 
-        // use rustfmt::skip to avoid formatting the original source code
-        // unfortunately that also skips formatting this node in the test file
         let test_file = pm::quote! {
             #(#file_attrs)*
             #(#extern_crates)*
 
             #(
                 #[path = #test_module_paths]
-                #[rustfmt::skip]
                 pub mod #test_module_idents;
             )*
 
             #( use ::__layer_test::#dep_idents;)*
         };
-        Ok(test_file.to_string())
+        Ok(util::run_rustfmt(test_file.to_string()))
     }
 }
 
@@ -127,11 +129,6 @@ fn resolve_items(
         let syn::Item::Mod(item) = item else {
             continue;
         };
-        // add rustfmt skip attribute to all modules, so we don't
-        // format the original source code
-        item.attrs.push(syn::parse_quote! {
-            #[rustfmt::skip]
-        });
         // modules must be publicly visible so the test package can access them
         if !matches!(item.vis, syn::Visibility::Public(_)) {
             cu::trace!("making module `{}` public", item.ident);
@@ -148,11 +145,11 @@ fn resolve_items(
                 if let syn::Meta::NameValue(meta) = &mut path_attr.meta {
                     if let syn::Expr::Lit(expr) = &mut meta.value {
                         if let syn::Lit::Str(lit) = &mut expr.lit {
-                            let module_path =
-                                util::resolve_path(lit.value(), base_path).context(format!(
-                                    "failed to resolve path for module `{}` in {tag}",
-                                    item.ident
-                                ))?;
+                            let module_path = cu::check!(
+                                util::resolve_path(lit.value(), base_path),
+                                "failed to resolve path for module `{}` in {tag}",
+                                item.ident
+                            )?;
                             resolve_map.insert(item.ident.to_string(), module_path.clone());
                             *lit = syn::LitStr::new(&module_path, lit.span());
                         }
@@ -170,19 +167,19 @@ fn resolve_items(
                 );
                 let child_tag = format!("{tag}::{}", item.ident);
                 let child_path = base_path.join(item.ident.to_string());
-                resolve_items(&child_tag, child_items, &child_path, false, resolve_map).context(
-                    format!(
-                        "failed to resolve items in inline module `{}` in {tag}",
-                        item.ident
-                    ),
+                cu::check!(
+                    resolve_items(&child_tag, child_items, &child_path, false, resolve_map),
+                    "failed to resolve items in inline module `{}` in {tag}",
+                    item.ident
                 )?;
                 continue;
             }
             // add path attribute to non-inline modules
-            let path = resolve_module(tag, &item.ident, base_path).context(format!(
+            let path = cu::check!(
+                resolve_module(tag, &item.ident, base_path),
                 "failed to resolve module `{}` in {tag}",
                 item.ident
-            ))?;
+            )?;
             cu::trace!("adding path attribute to module `{}`: {}", item.ident, path);
             item.attrs.push(syn::parse_quote! {
                 #[path = #path]
@@ -211,8 +208,10 @@ fn resolve_module(tag: &str, module_ident: &syn::Ident, base_path: &Path) -> cu:
     }
 
     // <base_path>/module_ident/mod.rs
-    let module_path = util::resolve_path(format!("{module_name}/mod.rs"), base_path)
-        .context(format!("failed to resolve module `{module_name}` in {tag}"))?;
+    let module_path = cu::check!(
+        util::resolve_path(format!("{module_name}/mod.rs"), base_path),
+        "failed to resolve module `{module_name}` in {tag}"
+    )?;
     cu::trace!("found module file at {module_path}");
     Ok(module_path)
 }
