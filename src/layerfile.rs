@@ -90,7 +90,10 @@ impl<'a> DepGraph<'a> {
             temp_deps_for_building.insert(name.clone(), layer.depends_on.clone());
         }
 
-        check_circular_dependencies(&deps).context("circular dependency detected")?;
+        cu::check!(
+            check_circular_dependencies(&deps),
+            "circular dependency detected"
+        )?;
         cu::debug!("dependency graph built successfully");
 
         cu::debug!("building topological order from dependencies");

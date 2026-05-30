@@ -68,40 +68,53 @@ fn main(mut args: Cli) -> cu::Result<()> {
         unsafe { std::env::set_var("RUSTFLAGS", rust_flags) };
     }
 
-    cu::bin::find(
-        "cargo",
-        [
-            // https://doc.rust-lang.org/cargo/reference/environment-variables.html
-            // (if we make this into a 3rd party subcommand)
-            cu::bin::from_env("CARGO"),
-            cu::bin::from_env("CARGO_BIN"),
-            cu::bin::in_PATH(),
-        ],
-    )
-    .context("cannot find cargo!")?;
+    cu::check!(
+        cu::bin::find(
+            "cargo",
+            [
+                // https://doc.rust-lang.org/cargo/reference/environment-variables.html
+                // (if we make this into a 3rd party subcommand)
+                cu::bin::from_env("CARGO"),
+                cu::bin::from_env("CARGO_BIN"),
+                cu::bin::in_PATH(),
+            ],
+        ),
+        "cannot find cargo!"
+    )?;
 
     cu::debug!("parsed arguments: {args:#?}");
     let manifest_path = Path::new("./Cargo.toml");
-    let manifest_info =
-        cargo_toml::prepare(manifest_path).context("Failed to prepare Cargo.toml")?;
+    let manifest_info = cu::check!(
+        cargo_toml::prepare(manifest_path),
+        "failed to prepare Cargo.toml"
+    )?;
 
     let layerfile = toml::read::<LayerFile>(cu::fs::reader(&args.layerfile)?)?;
 
-    let dep_graph = DepGraph::build(&layerfile.layer)
-        .context("failed to build dependency graph from Layerfile")?;
+    let dep_graph = cu::check!(
+        DepGraph::build(&layerfile.layer),
+        "failed to build dependency graph from Layerfile"
+    )?;
 
-    let entryfile_path = manifest_path
-        .parent()
-        .map(|p| p.join(&manifest_info.lib_entrypoint))
-        .context("failed to determine entry file path")?;
-    let entryfile_base_path = entryfile_path
-        .parent()
-        .context("failed to determine base path for entry file")?;
-    let entryfile = EntryFile::resolve(&manifest_info.lib_entrypoint_content, entryfile_base_path)
-        .context("Failed to resolve modules in library entry file")?;
+    let entryfile_path = cu::check!(
+        manifest_path
+            .parent()
+            .map(|p| p.join(&manifest_info.lib_entrypoint)),
+        "failed to determine entry file path"
+    )?;
+    let entryfile_base_path = cu::check!(
+        entryfile_path.parent(),
+        "failed to determine base path for entry file"
+    )?;
+    let entryfile = cu::check!(
+        EntryFile::resolve(&manifest_info.lib_entrypoint_content, entryfile_base_path),
+        "Failed to resolve modules in library entry file"
+    )?;
 
-    prepare_workspace(&args.temp_dir, &manifest_info, &entryfile)
-        .context("failed to prepare temporary workspace")?;
+    cu::check!(
+        prepare_workspace(&args.temp_dir, &manifest_info, &entryfile),
+        "failed to prepare temporary workspace"
+    )?;
 
     let test_package_name = util::test_package_name(&manifest_info.package_name);
     let temp_dir = Path::new(&args.temp_dir);
@@ -110,16 +123,18 @@ fn main(mut args: Cli) -> cu::Result<()> {
 
     cu::debug!("start layer testing");
 
-    checker::build_by_layers(
-        &args,
-        manifest_path,
-        &package_dir,
-        &test_package_dir,
-        &layerfile,
-        &dep_graph,
-        &entryfile,
-    )
-    .context("layer test failed")?;
+    cu::check!(
+        checker::build_by_layers(
+            &args,
+            manifest_path,
+            &package_dir,
+            &test_package_dir,
+            &layerfile,
+            &dep_graph,
+            &entryfile,
+        ),
+        "layer test failed"
+    )?;
 
     cu::debug!("layer testing completed successfully");
     Ok(())
@@ -135,28 +150,40 @@ fn prepare_workspace(
 
     let package_name = &manifest_info.package_name;
     let package_dir = path.join(package_name);
-    cu::fs::make_dir(&package_dir).context("failed to create temporary package directory")?;
+    cu::check!(
+        cu::fs::make_dir(&package_dir),
+        "failed to create temporary package directory"
+    )?;
 
     cu::debug!("ensuring test package directory exists");
     let test_package_name = util::test_package_name(&manifest_info.package_name);
     let test_package_dir = path.join(&test_package_name);
-    cu::fs::make_dir(&test_package_dir).context("failed to create test package directory")?;
+    cu::check!(
+        cu::fs::make_dir(&test_package_dir),
+        "failed to create test package directory"
+    )?;
 
     let build_script = Path::new("./build.rs");
     if build_script.exists() && !build_script.is_dir() {
         cu::debug!("found build script, copying build script to generated packages");
         let package_build_script = package_dir.join("build.rs");
-        cu::fs::copy(build_script, package_build_script)
-            .context("failed to copy build script to temporary package")?;
+        cu::check!(
+            cu::fs::copy(build_script, package_build_script),
+            "failed to copy build script to temporary package"
+        )?;
         let test_package_build_script = test_package_dir.join("build.rs");
-        cu::fs::copy(build_script, test_package_build_script)
-            .context("failed to copy build script to test package")?;
+        cu::check!(
+            cu::fs::copy(build_script, test_package_build_script),
+            "failed to copy build script to test package"
+        )?;
     }
 
     cu::debug!("writing Cargo.toml to package directory");
     let cargo_toml_path = package_dir.join("Cargo.toml");
-    cu::fs::write(&cargo_toml_path, &manifest_info.content)
-        .context("failed to write modified Cargo.toml to temporary package directory")?;
+    cu::check!(
+        cu::fs::write(&cargo_toml_path, &manifest_info.content),
+        "failed to write modified Cargo.toml to temporary package directory"
+    )?;
 
     cu::debug!("preparing workspace Cargo.toml");
     let workspace_cargo_toml_path = path.join("Cargo.toml");
@@ -202,10 +229,13 @@ fn prepare_workspace(
         .entry("resolver")
         .or_insert(toml::Value::String("2".to_string()));
 
-    let readdir = std::fs::read_dir(temp_dir).context("failed to read temporary directory")?;
+    let readdir = cu::check!(
+        cu::fs::read_dir(temp_dir),
+        "failed to read temporary directory"
+    )?;
     let mut members = vec![];
     for entry in readdir {
-        let entry = entry.context("failed to read directory entry")?;
+        let entry = entry?;
         let entry_path = entry.path();
         if entry_path.is_dir() && entry.file_name() != "target" {
             let manifest_path = entry_path.join("Cargo.toml");
@@ -220,36 +250,49 @@ fn prepare_workspace(
         toml::Value::Array(members.into_iter().map(toml::Value::String).collect()),
     );
 
-    let workspace_serialized = toml::stringify(&workspace_cargo_toml)
-        .context("failed to serialize workspace Cargo.toml")?;
+    let workspace_serialized = cu::check!(
+        toml::stringify(&workspace_cargo_toml),
+        "failed to serialize workspace Cargo.toml"
+    )?;
     cu::trace!("serialized workspace Cargo.toml: {workspace_serialized}");
-    cu::fs::write(workspace_cargo_toml_path, workspace_serialized)
-        .context("failed to write workspace Cargo.toml")?;
+    cu::check!(
+        cu::fs::write(workspace_cargo_toml_path, workspace_serialized),
+        "failed to write workspace Cargo.toml"
+    )?;
 
     let lib_entry_path = package_dir.join(&manifest_info.lib_entrypoint);
     if let Some(lib_parent) = lib_entry_path.parent() {
-        cu::fs::make_dir(lib_parent).context("failed to create directory for lib entry point")?;
+        cu::check!(
+            cu::fs::make_dir(lib_parent),
+            "failed to create directory for lib entry point"
+        )?;
     }
     cu::debug!(
         "writing lib entry point file to: {}",
         lib_entry_path.display()
     );
     let lib_content = entryfile.produce_lib();
-    cu::fs::write(&lib_entry_path, lib_content).context("failed to write lib entry point file")?;
+    cu::check!(
+        cu::fs::write(&lib_entry_path, lib_content),
+        "failed to write lib entry point file"
+    )?;
 
     cu::debug!("preparing test package");
 
-    let test_package_manifest =
-        cargo_toml::make_test_package_manifest(manifest_info, &test_package_name)
-            .context("failed to create test package manifest")?;
+    let test_package_manifest = cu::check!(
+        cargo_toml::make_test_package_manifest(manifest_info, &test_package_name),
+        "failed to create test package manifest"
+    )?;
 
     let test_package_manifest_path = test_package_dir.join("Cargo.toml");
     cu::debug!(
         "writing test package Cargo.toml to: {}",
         test_package_manifest_path.display()
     );
-    cu::fs::write(&test_package_manifest_path, test_package_manifest)
-        .context("failed to write test package Cargo.toml")?;
+    cu::check!(
+        cu::fs::write(&test_package_manifest_path, test_package_manifest),
+        "failed to write test package Cargo.toml"
+    )?;
 
     cu::debug!("workspace prepared successfully");
     Ok(())
