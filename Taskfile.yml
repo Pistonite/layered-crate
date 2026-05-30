@@ -40,5 +40,6 @@ tasks:
       - cargo build
       - task: check
       - task: git:check-modification
-      # - git tag '{{.VERSION}}'
-      # - git push origin '{{.VERSION}}'
+      - git tag '{{.VERSION}}'
+      - git push origin '{{.VERSION}}'
+      - cargo publish
