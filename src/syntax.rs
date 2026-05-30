@@ -106,7 +106,6 @@ impl EntryFile {
 
             #(
                 #[path = #test_module_paths]
-                #[rustfmt::skip]
                 pub mod #test_module_idents;
             )*
 
@@ -132,11 +131,6 @@ fn resolve_items(
         let syn::Item::Mod(item) = item else {
             continue;
         };
-        // add rustfmt skip attribute to all modules, so we don't
-        // format the original source code
-        item.attrs.push(syn::parse_quote! {
-            #[rustfmt::skip]
-        });
         // modules must be publicly visible so the test package can access them
         if !matches!(item.vis, syn::Visibility::Public(_)) {
             cu::trace!("making module `{}` public", item.ident);
