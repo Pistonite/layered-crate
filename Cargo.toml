@@ -1,6 +1,6 @@
 [package]
 name = "layered-crate"
-version = "0.4.5"
+version = "0.4.6"
 edition = "2024"
 description = "Tool to declare and verify internal dependencies amongst modules inside a crate"
 repository = "https://github.com/Pistonite/layered-crate"
@@ -17,18 +17,18 @@ exclude = [
 
 [dependencies.cu]
 package = "pistonite-cu"
-version = "0.8.4"
+version = "0.9.0"
 features = ["cli", "process", "toml", "json"]
 # path = "../cu/packages/copper"
 
 [dependencies.pm]
 package = "pistonite-pm"
-version = "0.2.6"
+version = "0.2.7"
 default-features = false
 features = ["full"]
 
 [dependencies]
-itertools = "0.14.0"
+itertools = "0.15.0"
 serde = "1"
 
 [package.metadata.binstall.signing]
