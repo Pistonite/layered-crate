@@ -81,13 +81,19 @@ pub fn prepare(manifest_path: &Path) -> cu::Result<CargoManifestInfo> {
 
     cu::debug!("finding lib entrypoint");
     let lib_entrypoint = match cargo_toml.get("lib") {
-        Some(lib) => {
-            let lib_entrypoint = cu::check!(
-                lib.get("path").and_then(|p| p.as_str()),
-                "failed to read lib.path from Cargo.toml"
-            )?;
-            lib_entrypoint.to_string()
-        }
+        Some(lib) => match lib.get("path") {
+            None => {
+                cu::debug!("no lib.path found in Cargo.toml, assuming default src/lib.rs");
+                "src/lib.rs".to_string()
+            }
+            Some(path) => {
+                let lib_entrypoint = cu::check!(
+                    path.as_str(),
+                    "failed to read lib.path from Cargo.toml (expecting a string)"
+                )?;
+                lib_entrypoint.to_string()
+            }
+        },
         None => {
             cu::debug!("no lib section found in Cargo.toml, assuming default src/lib.rs");
             "src/lib.rs".to_string()
@@ -121,22 +127,19 @@ pub fn prepare(manifest_path: &Path) -> cu::Result<CargoManifestInfo> {
     }
 
     cu::debug!("checking if we are in a workspace");
-    let workspace_deps = if let Some(workspace) = cargo_toml.get_mut("workspace") {
+    let workspace_info = if let Some(workspace) = cargo_toml.get_mut("workspace") {
         cu::debug!("found workspace section in Cargo.toml");
         cu::check!(
             resolve_paths_in_workspace(workspace, &manifest_dir_abs),
             "failed to resolve paths in workspace section"
         )?;
-        workspace
-            .get("dependencies")
-            .and_then(|deps| deps.as_table())
-            .cloned()
+        Some(WorkspaceInfo::from_workspace_table(workspace))
     } else {
         cu::debug!("traversing up the directories to find workspace");
         // traverse up the directory tree to find a Cargo.toml with a [workspace] section
         let parent_parent = manifest_dir_abs.parent_abs().ok();
         let mut current_path = parent_parent.as_deref();
-        let mut workspace_deps_out = None;
+        let mut workspace_info_out = None;
         while let Some(current) = current_path {
             cu::trace!("checking directory for workspace: {}", current.display());
             let workspace_manifest_path = current.join("Cargo.toml");
@@ -167,11 +170,7 @@ pub fn prepare(manifest_path: &Path) -> cu::Result<CargoManifestInfo> {
                     resolve_paths_in_workspace(workspace_table, current),
                     "failed to resolve paths in workspace section"
                 )?;
-                cu::debug!("getting workspace dependencies");
-                workspace_deps_out = workspace_table
-                    .get("dependencies")
-                    .and_then(|deps| deps.as_table())
-                    .cloned();
+                workspace_info_out = Some(WorkspaceInfo::from_workspace_table(workspace_table));
                 break;
             } else {
                 cu::trace!(
@@ -181,9 +180,22 @@ pub fn prepare(manifest_path: &Path) -> cu::Result<CargoManifestInfo> {
                 current_path = current.parent();
             }
         }
-        workspace_deps_out
+        workspace_info_out
     };
+    let workspace_info = workspace_info.unwrap_or_default();
+    let workspace_deps = workspace_info.dependencies;
     cu::debug!("workspace dependencies: {:#?}", workspace_deps);
+
+    cu::debug!("resolving inherited package fields in Cargo.toml");
+    cu::check!(
+        resolve_package_inheritance(&mut cargo_toml, workspace_info.package.as_ref()),
+        "failed to resolve inherited [package] fields in Cargo.toml"
+    )?;
+    stub_package_files(&mut cargo_toml);
+    cu::check!(
+        resolve_lints_inheritance(&mut cargo_toml, workspace_info.lints.as_ref()),
+        "failed to resolve inherited [lints] in Cargo.toml"
+    )?;
 
     cu::debug!("resolving dependency paths in Cargo.toml");
     cu::check!(
@@ -281,6 +293,101 @@ pub fn prepare(manifest_path: &Path) -> cu::Result<CargoManifestInfo> {
         dep_features,
         default_features,
     })
+}
+
+/// Info extracted from the `[workspace]` section that member packages can inherit from
+#[derive(Default)]
+struct WorkspaceInfo {
+    /// `[workspace.dependencies]`
+    dependencies: Option<toml::Table>,
+    /// `[workspace.package]`
+    package: Option<toml::Table>,
+    /// `[workspace.lints]`
+    lints: Option<toml::Table>,
+}
+
+impl WorkspaceInfo {
+    fn from_workspace_table(workspace: &toml::Value) -> Self {
+        let get = |key: &str| workspace.get(key).and_then(|x| x.as_table()).cloned();
+        Self {
+            dependencies: get("dependencies"),
+            package: get("package"),
+            lints: get("lints"),
+        }
+    }
+}
+
+fn is_workspace_inherited(value: &toml::Value) -> bool {
+    value
+        .as_table()
+        .and_then(|t| t.get("workspace"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Replace `key.workspace = true` in [package] with the value from `[workspace.package]`
+fn resolve_package_inheritance(
+    cargo_toml: &mut toml::Table,
+    workspace_package: Option<&toml::Table>,
+) -> cu::Result<()> {
+    let Some(package) = cargo_toml.get_mut("package").and_then(|p| p.as_table_mut()) else {
+        cu::trace!("no [package] table, skipping inheritance resolution");
+        return Ok(());
+    };
+    for (key, value) in package.iter_mut() {
+        if !is_workspace_inherited(value) {
+            continue;
+        }
+        if STUBBED_PACKAGE_KEYS.contains(&key.as_str()) {
+            // will be replaced with stub
+            continue;
+        }
+        let inherited = cu::check!(
+            workspace_package.and_then(|p| p.get(key.as_str())),
+            "package.{key} is inherited from workspace, but workspace.package.{key} was not found"
+        )?;
+        cu::debug!("inheriting package.{key} from workspace: {inherited}");
+        *value = inherited.clone();
+    }
+    Ok(())
+}
+
+/// Package keys that reference files (or are only needed for publishing),
+/// which are replaced with stubs in the generated manifests
+const STUBBED_PACKAGE_KEYS: &[&str] = &["readme", "license", "license-file"];
+
+/// Replace readme/license fields in [package] with stubs, since the generated
+/// package is not at the original location and is never published
+fn stub_package_files(cargo_toml: &mut toml::Table) {
+    let Some(package) = cargo_toml.get_mut("package").and_then(|p| p.as_table_mut()) else {
+        return;
+    };
+    for key in STUBBED_PACKAGE_KEYS {
+        if package.remove(*key).is_some() {
+            cu::debug!("removed package.{key} from generated manifest");
+        }
+    }
+    package.insert("readme".to_string(), false.into());
+}
+
+/// Replace `[lints] workspace = true` with `[workspace.lints]`
+fn resolve_lints_inheritance(
+    cargo_toml: &mut toml::Table,
+    workspace_lints: Option<&toml::Table>,
+) -> cu::Result<()> {
+    let Some(lints) = cargo_toml.get_mut("lints") else {
+        return Ok(());
+    };
+    if !is_workspace_inherited(lints) {
+        return Ok(());
+    }
+    let workspace_lints = cu::check!(
+        workspace_lints,
+        "lints is inherited from workspace, but workspace.lints was not found"
+    )?;
+    cu::debug!("inheriting lints from workspace");
+    *lints = toml::Value::Table(workspace_lints.clone());
+    Ok(())
 }
 
 fn resolve_paths_in_workspace(
